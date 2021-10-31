@@ -140,7 +140,9 @@ impl TryFrom<&[u8]> for Headers {
                         s.push_str(&v[1..]);
                     }
 
-                    entry.insert(s);
+                    for v in s.split(',') {
+                        entry.insert(v.to_string());
+                    }
                 }
                 [""] => continue,
                 _ => {
@@ -184,7 +186,7 @@ mod try_from {
     use super::*;
 
     #[test]
-    fn single_line() {
+    fn single_line_single_value() {
         let headers = Headers::try_from(
             "NATS/1.0 200\r\naccept-encoding: json\r\nauthorization: s3cr3t\r\n"
                 .as_bytes(),
@@ -203,20 +205,73 @@ mod try_from {
     }
 
     #[test]
-    fn multi_line_with_tabs() {
+    fn single_line_multi_value() {
         let headers = Headers::try_from(
-            "NATS/1.0 200\r\nx-test: one,\r\n\ttwo,\r\n\tthree\r\n".as_bytes(),
+            "NATS/1.0 200\r\naccept-encoding: html,json,text\r\nauthorization: s3cr3t\r\n"
+                .as_bytes(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            headers.inner.get(&"accept-encoding".to_string()),
+            Some(&HashSet::from_iter(vec![
+                "html".to_string(),
+                "json".to_string(),
+                "text".to_string(),
+            ]))
+        );
+
+        assert_eq!(
+            headers.inner.get(&"authorization".to_string()),
+            Some(&HashSet::from_iter(vec!["s3cr3t".to_string()]))
+        );
+    }
+
+    #[test]
+    fn multi_line_single_value_with_tab() {
+        let headers = Headers::try_from(
+            "NATS/1.0 200\r\nx-test: one\r\n\t two\r\n\t three\r\n".as_bytes(),
         )
         .unwrap();
 
         assert_eq!(
             headers.inner.get(&"x-test".to_string()),
-            Some(&HashSet::from_iter(vec!["one,two,three".to_string(),]))
+            Some(&HashSet::from_iter(vec!["one two three".to_string(),]))
         );
     }
 
     #[test]
-    fn multi_line_with_spaces() {
+    fn multi_line_single_value_with_space() {
+        let headers = Headers::try_from(
+            "NATS/1.0 200\r\nx-test: one\r\n  two\r\n  three\r\n".as_bytes(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            headers.inner.get(&"x-test".to_string()),
+            Some(&HashSet::from_iter(vec!["one two three".to_string(),]))
+        );
+    }
+
+    #[test]
+    fn multi_line_multi_value_with_tab() {
+        let headers = Headers::try_from(
+            "NATS/1.0 200\r\nx-test: one, \r\n\ttwo,\r\n\tthree\r\n".as_bytes(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            headers.inner.get(&"x-test".to_string()),
+            Some(&HashSet::from_iter(vec![
+                "one".to_string(),
+                "two".to_string(),
+                "three".to_string(),
+            ]))
+        );
+    }
+
+    #[test]
+    fn multi_line_multi_value_with_spaces() {
         let headers = Headers::try_from(
             "NATS/1.0 200\r\nx-test: one,\r\n two,\r\n three\r\n".as_bytes(),
         )
@@ -224,7 +279,11 @@ mod try_from {
 
         assert_eq!(
             headers.inner.get(&"x-test".to_string()),
-            Some(&HashSet::from_iter(vec!["one,two,three".to_string(),]))
+            Some(&HashSet::from_iter(vec![
+                "one".to_string(),
+                "two".to_string(),
+                "three".to_string(),
+            ]))
         );
     }
 }
