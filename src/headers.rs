@@ -106,7 +106,7 @@ impl TryFrom<&[u8]> for Headers {
     fn try_from(buf: &[u8]) -> std::io::Result<Self> {
         let mut inner = HashMap::default();
         let mut lines = if let Ok(line) = std::str::from_utf8(buf) {
-            line.lines()
+            line.lines().peekable()
         } else {
             return parse_error("invalid utf8 received");
         };
@@ -118,6 +118,13 @@ impl TryFrom<&[u8]> for Headers {
         } else {
             return parse_error("expected header information not present");
         };
+
+        // The first line cannot start with a leading space.
+        if let Some(v) = lines.peek() {
+            if v.starts_with(char::is_whitespace) {
+                return parse_error("malformed header initial line");
+            }
+        }
 
         for line in lines {
             let splits = line.splitn(2, ':').map(str::trim).collect::<Vec<_>>();
