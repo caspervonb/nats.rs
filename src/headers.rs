@@ -164,3 +164,21 @@ impl Headers {
         buf
     }
 }
+
+#[cfg(test)]
+mod try_from {
+    use super::*;
+    use std::io::ErrorKind;
+
+    #[test]
+    fn empty() {
+        let error = Headers::try_from("".as_bytes()).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn invalid_version_line() {
+        let error = Headers::try_from("http/1.0\r\n".as_bytes()).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
+    }
+}
