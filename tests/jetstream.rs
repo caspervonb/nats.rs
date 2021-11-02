@@ -165,3 +165,38 @@ fn jetstream_libdoc_test() {
     let flipped: std::io::Result<Vec<usize>> = results.into_iter().collect();
     let _sizes: Vec<usize> = flipped.unwrap();
 }
+
+#[test]
+fn jetstream_flow_control_stalled() {
+    let (_s, nc) = run_basic_jetstream();
+
+    let stream = nc
+        .create_stream(StreamConfig {
+            name: "stream".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let consumer = nc
+        .create_consumer(
+            "stream",
+            &ConsumerConfig {
+                deliver_subject: Some("subject".to_string()),
+                durable_name: Some("consumer".to_string()),
+                idle_heartbeat: 200000000,
+                flow_control: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    // Have a subscription on the FC subject to make sure that the library
+    // respond to the requests for un-stall
+
+    // Publish bunch of messages.
+    for i in 1..=1000 {
+        nc.publish("stream", format!("{}", i)).unwrap();
+    }
+
+    // Now wait that we respond to a stalled FC
+}
