@@ -57,7 +57,7 @@
 //!
 //! js.add_stream("my_stream")?;
 //!
-//! let consumer: nats::jetstream::Consumer = js.add_consumer("my_stream", "my_consumer")?;
+//! let consumer: nats::jetstreamConsumerSubscription = js.add_consumer("my_stream", "my_consumer")?;
 //!
 //! # Ok(()) }
 //! ```
@@ -73,7 +73,7 @@
 //!
 //! js.add_stream("my_stream")?;
 //!
-//! let consumer: nats::jetstream::Consumer = js.add_consumer("my_stream", ConsumerConfig {
+//! let consumer: nats::jetstreamConsumerSubscription = js.add_consumer("my_stream", ConsumerConfig {
 //!     durable_name: Some("my_consumer".to_string()),
 //!     deliver_subject: Some("my_push_consumer_subject".to_string()),
 //!     ack_policy: AckPolicy::All,
@@ -877,12 +877,12 @@ impl JetStream {
     /// `ConsumerInfo` that may have been returned
     /// from the `nats::Connection::list_consumers`
     /// iterator.
-    pub fn from_consumer_info(&self, ci: ConsumerInfo) -> io::Result<Consumer> {
+    pub fn from_consumer_info(&self, ci: ConsumerInfo) -> io::Result<ConsumerSubscription> {
         self.existing::<String, ConsumerConfig>(ci.stream_name, ci.config)
     }
 
     /// Use an existing `JetStream` `Consumer`
-    pub fn existing<S, C>(&self, stream: S, cfg: C) -> io::Result<Consumer>
+    pub fn existing<S, C>(&self, stream: S, cfg: C) -> io::Result<ConsumerSubscription>
     where
         S: AsRef<str>,
         ConsumerConfig: From<C>,
@@ -896,7 +896,7 @@ impl JetStream {
             None
         };
 
-        Ok(Consumer {
+        Ok(ConsumerSubscription {
             js: self.to_owned(),
             stream,
             cfg,
@@ -906,7 +906,7 @@ impl JetStream {
     }
 
     /// Create a `JetStream` consumer.
-    pub fn add_consumer<S, C>(&self, stream: S, cfg: C) -> io::Result<Consumer>
+    pub fn add_consumer<S, C>(&self, stream: S, cfg: C) -> io::Result<ConsumerSubscription>
     where
         S: AsRef<str>,
         ConsumerConfig: From<C>,
@@ -947,7 +947,7 @@ impl JetStream {
     /// already exists, and creates it if not. If you want to use an existing
     /// `Consumer` without this check and creation, use the `existing`
     /// method.
-    pub fn create_or_bind<S, C>(&self, stream: S, cfg: C) -> io::Result<Consumer>
+    pub fn create_or_bind<S, C>(&self, stream: S, cfg: C) -> io::Result<ConsumerSubscription>
     where
         S: AsRef<str>,
         ConsumerConfig: From<C>,
@@ -1051,7 +1051,7 @@ impl JetStream {
 }
 
 /// `JetStream` reliable consumption functionality.
-pub struct Consumer {
+pub struct ConsumerSubscription {
     /// The underlying NATS client
     pub js: JetStream,
 
@@ -1072,7 +1072,7 @@ pub struct Consumer {
     pub timeout: Duration,
 }
 
-impl Consumer {
+impl ConsumerSubscription {
     /// Process a batch of messages. If `AckPolicy::All` is set,
     /// this will send a single acknowledgement at the end of
     /// the batch.
