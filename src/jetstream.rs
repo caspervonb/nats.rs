@@ -84,7 +84,7 @@
 //! ```
 //!
 //! Consumers can also be created on-the-fly using `JetStream`'s `create_or_bind`, and later used with
-//! `existing` if you do not wish to auto-create them.
+//! `bind` if you do not wish to auto-create them.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -93,7 +93,7 @@
 //! let nc = nats::connect("my_server::4222")?;
 //! let js = nats::jetstream::new(nc);
 //!
-//! let consumer_res = js.existing("my_stream", "non-existent_consumer");
+//! let consumer_res = js.bind("my_stream", "non-existent_consumer");
 //!
 //! // trying to use this consumer will fail because it hasn't been created yet
 //! assert!(consumer_res.is_err());
@@ -873,14 +873,8 @@ impl JetStream {
             .map(|dr| dr.success)
     }
 
-    /// Binds to an existing consumer as described by consumer info returned from
-    /// ['consumer_info'].
-    pub fn bind_to(&self, info: ConsumerInfo) -> io::Result<ConsumerSubscription> {
-        self.existing::<String, ConsumerConfig>(info.stream_name, info.config)
-    }
-
-    /// Use an existing `JetStream` `Consumer`
-    pub fn existing<S, C>(&self, stream: S, cfg: C) -> io::Result<ConsumerSubscription>
+    /// Bind to an existing consumer.
+    pub fn bind<S, C>(&self, stream: S, cfg: C) -> io::Result<ConsumerSubscription>
     where
         S: AsRef<str>,
         ConsumerConfig: From<C>,
@@ -901,6 +895,12 @@ impl JetStream {
             push_subscriber,
             timeout: Duration::from_millis(5),
         })
+    }
+
+    /// Binds to an existing consumer as described by consumer info returned from
+    /// ['consumer_info'].
+    pub fn bind_to(&self, info: ConsumerInfo) -> io::Result<ConsumerSubscription> {
+        self.bind::<String, ConsumerConfig>(info.stream_name, info.config)
     }
 
     /// Create a `JetStream` consumer.
@@ -938,7 +938,7 @@ impl JetStream {
 
         let _info: ConsumerInfo = self.js_request(&subject, &ser_req)?;
 
-        self.existing::<&str, ConsumerConfig>(stream, config)
+        self.bind::<&str, ConsumerConfig>(stream, config)
     }
 
     /// Instantiate a `JetStream` `Consumer`. Performs a check to see if the consumer
@@ -966,7 +966,7 @@ impl JetStream {
             self.add_consumer::<&str, &ConsumerConfig>(&stream, &cfg)?;
         }
 
-        self.existing::<String, ConsumerConfig>(stream, cfg)
+        self.bind::<String, ConsumerConfig>(stream, cfg)
     }
 
     /// Delete a `JetStream` consumer.

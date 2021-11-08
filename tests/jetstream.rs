@@ -324,13 +324,13 @@ fn jetstream_basics() -> io::Result<()> {
 
     assert_eq!(js.stream_info("test2")?.state.messages, 1000);
 
-    let mut consumer1 = js.existing("test2", "consumer1")?;
+    let mut consumer1 = js.bind("test2", "consumer1")?;
 
     for _ in 1..=1000 {
         consumer1.process(|_msg| Ok(()))?;
     }
 
-    let mut consumer2 = js.existing("test2", consumer2_cfg)?;
+    let mut consumer2 = js.bind("test2", consumer2_cfg)?;
 
     let mut count = 0;
     while count != 1000 {
@@ -353,7 +353,7 @@ fn jetstream_basics() -> io::Result<()> {
 
     js.add_consumer("test2", "consumer3")?;
 
-    js.existing("test2", "consumer3")?;
+    js.bind("test2", "consumer3")?;
 
     // cleanup
     let streams: io::Result<Vec<StreamInfo>> = js.list_streams().collect();
