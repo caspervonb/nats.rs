@@ -387,7 +387,7 @@ fn jetstream_libdoc_test() {
     nc.publish("my_stream", "4").unwrap();
 
     let mut consumer = js
-        .create_or_bind("my_stream", "existing_or_created_consumer")
+        .subscribe("my_stream", "existing_or_created_consumer")
         .unwrap();
 
     // set this very high for CI
