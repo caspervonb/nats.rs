@@ -873,12 +873,10 @@ impl JetStream {
             .map(|dr| dr.success)
     }
 
-    /// Instantiate a `JetStream` `Consumer` from an existing
-    /// `ConsumerInfo` that may have been returned
-    /// from the `nats::Connection::list_consumers`
-    /// iterator.
-    pub fn from_consumer_info(&self, ci: ConsumerInfo) -> io::Result<ConsumerSubscription> {
-        self.existing::<String, ConsumerConfig>(ci.stream_name, ci.config)
+    /// Binds to an existing consumer as described by consumer info returned from
+    /// ['consumer_info'].
+    pub fn bind_to(&self, info: ConsumerInfo) -> io::Result<ConsumerSubscription> {
+        self.existing::<String, ConsumerConfig>(info.stream_name, info.config)
     }
 
     /// Use an existing `JetStream` `Consumer`
