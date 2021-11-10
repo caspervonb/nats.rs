@@ -1,4 +1,3 @@
-// Copyright 2020-2021 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -103,7 +102,8 @@ use std::{
     sync::atomic::Ordering,
 };
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -113,6 +113,10 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 const ORDERED_IDLE_HEARTBEAT: Duration = Duration::from_nanos(5_000_000_000);
 
 // TODO re-organize this into a jetstream directory
+pub use crate::jetstream_kv::{
+    KeyValueBucketStatus, KeyValueConfig, KeyValueOperation, KeyValueStore,
+};
+
 pub use crate::jetstream_push_subscription::PushSubscription;
 pub use crate::jetstream_types::*;
 
@@ -1221,7 +1225,9 @@ impl JetStream {
         );
 
         // Handle sequence mismatch, etc.
-        if is_ordered || has_idle_heartbeat || has_flow_control {
+        // We use a filter to intercept messages before they're pushed onto the channel so that we
+        // can process messages as soon as they arrive.
+        if has_idle_heartbeat || has_flow_control {
             // Sequences for gap detection
 
             let context = self.clone();
@@ -1230,29 +1236,41 @@ impl JetStream {
                 stream_seq: 0,
             }));
 
-            // We use a filter to intercept messages before they're pushed onto the channel so that we
-            // can process messages as soon as they arrive.
             let push_subscription = push_subscription.clone();
             let sequence_pair_clone = sequence_pair.clone();
 
             let handle_consumer_mismatch = move |start_seq: u64| {
+                if !is_ordered {
+                    return false;
+                }
+
                 let stream_name = stream_name.clone();
                 let context = context.clone();
                 let push_subscription = push_subscription.clone();
                 let consumer_config = consumer_config.clone();
                 let sequence_pair = sequence_pair_clone.clone();
 
-                thread::spawn(move || {
-                    // Replace the subscription with a new delivery subject
-                    let deliver_subject = context.connection.new_inbox();
-                    let result = context.connection.0.client.resubscribe(
-                        push_subscription.0.sid.load(Ordering::Relaxed),
-                        &deliver_subject,
-                    );
+                // Immediately detach subscription so that messages no longer get delivered to it.
+                // We do this to make sure that nothing can be accidentally delivered while the
+                // consumer is being reset.
+                //
+                // If the subscription is already detached this was caused by a message arriving
+                // out of order and we can just ignore it.
+                let old_sid = push_subscription.0.sid.load(Ordering::Acquire);
 
-                    if let Ok(sid) = result {
-                        // Then change the subscription id for unsubscription
-                        push_subscription.0.sid.store(sid, Ordering::Relaxed);
+                if let Ok(subscription) = context.connection.0.client.detatch(old_sid) {
+                    thread::spawn(move || {
+                        // Now with no deadlocking concerns we can do the actual recreation of the
+                        // subscription.
+                        let deliver_subject = context.connection.new_inbox();
+                        let new_sid = context
+                            .connection
+                            .0
+                            .client
+                            .resubscribe(old_sid, subscription, &deliver_subject)
+                            .unwrap();
+
+                        push_subscription.0.sid.store(new_sid, Ordering::Release);
 
                         let mut consumer_config = consumer_config.clone();
                         consumer_config.deliver_subject = Some(deliver_subject);
@@ -1262,82 +1280,83 @@ impl JetStream {
                         context.add_consumer(stream_name, consumer_config).ok();
 
                         // Reset the consumer sequence counter
-                        let mut info = sequence_pair.lock().unwrap();
+                        let mut info = sequence_pair.lock();
                         info.consumer_seq = 0;
-                    }
-                });
+                    });
+                }
 
-                // We're resetting so return false to make the filter drop the message.
-                false
+                // We're resetting so return true to mark this the triggering condition as
+                // processed.
+                true
             };
 
             let context = self.clone();
-            self.connection.0.client.set_preprocessor(
-                sid,
-                Box::new(move |message| {
-                    if let Ok(mut info) = sequence_pair.try_lock() {
-                        // Filter out flow control
-                        if message.is_flow_control() {
-                            return true;
-                        }
+            let preprocess = move |message: &Message| {
+                let mut sequence_info = sequence_pair.lock();
 
-                        // Track and respond to idle heartbeats
-                        if message.is_idle_heartbeat() {
-                            let maybe_consumer_stalled = message
-                                .headers
-                                .as_ref()
-                                .and_then(|headers| {
-                                    headers
-                                        .get(header::NATS_CONSUMER_STALLED)
-                                        .map(|set| set.iter().cloned().next())
-                                })
-                                .flatten();
+                // Filter out flow control
+                if message.is_flow_control() {
+                    return true;
+                }
 
-                            if let Some(consumer_stalled) = maybe_consumer_stalled {
-                                context.connection.try_publish_with_reply_or_headers(
-                                    &consumer_stalled,
-                                    None,
-                                    None,
-                                    b"",
-                                );
-                            }
+                // Track and respond to idle heartbeats
+                if message.is_idle_heartbeat() {
+                    let maybe_consumer_stalled = message
+                        .headers
+                        .as_ref()
+                        .and_then(|headers| {
+                            headers
+                                .get(header::NATS_CONSUMER_STALLED)
+                                .map(|set| set.iter().cloned().next())
+                        })
+                        .flatten();
 
-                            let maybe_consumer_seq = message
-                                .headers
-                                .as_ref()
-                                .and_then(|headers| {
-                                    headers
-                                        .get(header::NATS_LAST_CONSUMER)
-                                        .map(|set| set.iter().cloned().next())
-                                })
-                                .flatten();
-
-                            if let Some(consumer_seq) = maybe_consumer_seq {
-                                let consumer_seq = consumer_seq.parse::<u64>().unwrap();
-                                if consumer_seq != info.consumer_seq {
-                                    return handle_consumer_mismatch(info.stream_seq + 1);
-                                }
-                            }
-
-                            return true;
-                        }
-
-                        // Track messages for sequence mismatches.
-                        if let Some(message_info) = message.jetstream_message_info() {
-                            if message_info.consumer_seq != info.consumer_seq + 1 {
-                                return handle_consumer_mismatch(info.stream_seq + 1);
-                            }
-
-                            info.stream_seq = message_info.stream_seq;
-                            info.consumer_seq = message_info.consumer_seq;
-                        }
-
-                        return false;
+                    if let Some(consumer_stalled) = maybe_consumer_stalled {
+                        context.connection.try_publish_with_reply_or_headers(
+                            &consumer_stalled,
+                            None,
+                            None,
+                            b"",
+                        );
                     }
 
-                    false
-                }),
-            )?;
+                    let maybe_consumer_seq = message
+                        .headers
+                        .as_ref()
+                        .and_then(|headers| {
+                            headers
+                                .get(header::NATS_LAST_CONSUMER)
+                                .map(|set| set.iter().cloned().next())
+                        })
+                        .flatten();
+
+                    if let Some(consumer_seq) = maybe_consumer_seq {
+                        let consumer_seq = consumer_seq.parse::<u64>().unwrap();
+                        if consumer_seq != sequence_info.consumer_seq {
+                            return handle_consumer_mismatch(sequence_info.stream_seq + 1);
+                        }
+                    }
+
+                    return true;
+                }
+
+                // Track messages for sequence mismatches.
+                if let Some(message_info) = message.jetstream_message_info() {
+                    if message_info.consumer_seq != sequence_info.consumer_seq + 1 {
+                        return handle_consumer_mismatch(sequence_info.stream_seq + 1);
+                    }
+
+                    sequence_info.stream_seq = message_info.stream_seq;
+                    sequence_info.consumer_seq = message_info.consumer_seq;
+                }
+
+                false
+            };
+
+            self.connection
+                .0
+                .client
+                .set_preprocessor(sid, Box::new(preprocess))?;
         }
 
         Ok(push_subscription)
@@ -1453,6 +1472,60 @@ impl JetStream {
         }
         let subject = format!("{}STREAM.PURGE.{}", self.api_prefix(), stream);
         self.js_request(&subject, b"")
+    }
+
+    /// Get a message from a stream.
+    pub fn get_message<S: AsRef<str>>(&self, stream: S, seq: u64) -> io::Result<StreamMessage> {
+        let stream: &str = stream.as_ref();
+        if stream.is_empty() {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "the stream name must not be empty",
+            ));
+        }
+
+        let subject = format!("{}STREAM.MSG.GET.{}", self.api_prefix(), stream);
+        let request = serde_json::ser::to_vec(&StreamMessageGetRequest {
+            seq: Some(seq),
+            last_by_subject: None,
+        })?;
+
+        let raw_message = self
+            .js_request::<StreamMessageGetResponse>(&subject, &request)
+            .map(|response| response.message)?;
+
+        let message = StreamMessage::try_from(raw_message)?;
+
+        Ok(message)
+    }
+
+    /// Get the last message from a stream by subject
+    pub fn get_last_message<S: AsRef<str>>(
+        &self,
+        stream_name: S,
+        stream_subject: &str,
+    ) -> io::Result<StreamMessage> {
+        let stream_name: &str = stream_name.as_ref();
+        if stream_name.is_empty() {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "the stream name must not be empty",
+            ));
+        }
+
+        let subject = format!("{}STREAM.MSG.GET.{}", self.api_prefix(), stream_name);
+        let request = serde_json::ser::to_vec(&StreamMessageGetRequest {
+            seq: None,
+            last_by_subject: Some(stream_subject.to_string()),
+        })?;
+
+        let raw_message = self
+            .js_request::<StreamMessageGetResponse>(&subject, &request)
+            .map(|response| response.message)?;
+
+        let message = StreamMessage::try_from(raw_message)?;
+
+        Ok(message)
     }
 
     /// Delete message in a `JetStream` stream.
@@ -1593,7 +1666,7 @@ impl JetStream {
         let res: ApiResponse<Res> = serde_json::de::from_slice(&res_msg.data)?;
         match res {
             ApiResponse::Ok(stream_info) => Ok(stream_info),
-            ApiResponse::Err { error, .. } => {
+            ApiResponse::Err { error } => {
                 log::error!(
                     "failed to parse API response: {:?}",
                     std::str::from_utf8(&res_msg.data)
