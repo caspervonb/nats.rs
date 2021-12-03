@@ -26,7 +26,7 @@ use crossbeam_channel::RecvTimeoutError;
 use parking_lot::Mutex;
 
 use crate::connector::{Connector, NatsStream};
-use crate::message::{Message, MessagePreprocessor};
+use crate::message::Message;
 use crate::proto::{self, ClientOp, ServerOp};
 use crate::{header::HeaderMap, inject_delay, inject_io_failure, Options, ServerInfo};
 
@@ -83,12 +83,15 @@ struct ReadState {
     pings_out: u8,
 }
 
+/// A predicate used to preprocess messages for a subscription as they arrive over the wire.
+pub(crate) type Preprocessor = Box<dyn Fn(u64, &Message) -> bool + Send + Sync>;
+
 /// A registered subscription.
 struct Subscription {
     subject: String,
     queue_group: Option<String>,
     messages: channel::Sender<Message>,
-    preprocess: MessagePreprocessor,
+    preprocess: Preprocessor,
 }
 
 /// A NATS client.
@@ -374,7 +377,16 @@ impl Client {
         subject: &str,
         queue_group: Option<&str>,
     ) -> io::Result<(u64, channel::Receiver<Message>)> {
-        // Inject random delays when testing.
+        self.subscribe_with_preprocessor(subject, queue_group, Box::new(|_, _| false))
+    }
+
+    /// Subscribe to a subject with a message preprocessor.
+    pub(crate) fn subscribe_with_preprocessor(
+        &self,
+        subject: &str,
+        queue_group: Option<&str>,
+        message_processor: Preprocessor,
+    ) -> io::Result<(u64, channel::Receiver<Message>)> {
         inject_delay();
 
         let mut write = self.state.write.lock();
@@ -406,7 +418,7 @@ impl Client {
                 subject: subject.to_string(),
                 queue_group: queue_group.map(ToString::to_string),
                 messages: sender,
-                preprocess: Box::new(|_| false),
+                preprocess: message_processor,
             },
         );
 
@@ -506,30 +518,6 @@ impl Client {
         // NB see locking protocol for state.write and state.read
         drop(read);
         drop(write);
-
-        Ok(())
-    }
-
-    /// Sets the message preprocessor for a subscription.
-    ///
-    /// This predicate is called afer a message arrives and before it is queued up to subscription
-    /// channel.
-    ///
-    /// If the predicate returns true the message is considered consumed and is not queued on the
-    /// channel.
-    pub(crate) fn set_preprocessor(
-        &self,
-        sid: u64,
-        preprocess: MessagePreprocessor,
-    ) -> io::Result<()> {
-        let mut read = self.state.read.lock();
-
-        if let Some(subscription) = read.subscriptions.get_mut(&sid) {
-            subscription.preprocess = preprocess;
-        }
-
-        // NB see locking protocol for state.write and state.read
-        drop(read);
 
         Ok(())
     }
@@ -802,7 +790,7 @@ impl Client {
     fn dispatch(&self, mut reader: impl BufRead, connector: &mut Connector) -> io::Result<()> {
         // Handle operations received from the server.
         while let Some(op) = proto::decode(&mut reader)? {
-            println!("dispatch... {:?}", &op);
+            // println!("dispatch... {:?}", &op);
             // Inject random delays when testing.
             inject_delay();
 
@@ -868,21 +856,9 @@ impl Client {
                 } => {
                     // Ignore muted subscriptions
                     if self.state.meta.lock().mutes.get(&sid).is_some() {
-                        println!("MUTE: {}", sid);
                         continue;
                     }
 
-                    if subject == "foo" {
-                        // ...
-
-                        // randomly drop around 1 in 3 messages
-                        if fastrand::i32(0..3) == 0 {
-                            println!("DROP: {}", sid);
-                            continue;
-                        }
-                    }
-
-                    println!("dispatch: read lock is {}", self.state.read.is_locked());
                     let read = self.state.read.lock();
 
                     // Send the message to matching subscription.
@@ -899,17 +875,13 @@ impl Client {
                         // Preprocess and drop the message from the buffer if it the predicate
                         // returns true
                         let preprocess = &subscription.preprocess;
-                        println!("begin preprocess");
-                        if preprocess(&msg) {
-                            println!("preprocess continue");
+                        if preprocess(sid, &msg) {
                             continue;
                         }
 
-                        println!("preprocess ok");
-
                         // Send a message or drop it if the channel is
                         // disconnected or full.
-                        subscription.messages.try_send(msg).unwrap();
+                        subscription.messages.send(msg).unwrap();
                     }
                 }
 
@@ -922,11 +894,11 @@ impl Client {
                 } => {
                     // Ignore muted subscriptions
                     if self.state.meta.lock().mutes.get(&sid).is_some() {
-                        println!("dispatch: sid is muted: {}", sid);
+                        // println!("dispatch: sid is muted: {}", sid);
                         continue;
                     }
 
-                    println!("dispatch: read lock is {}", self.state.read.is_locked());
+                    // println!("dispatch: read lock is {}", self.state.read.is_locked());
 
                     let read = self.state.read.lock();
                     // Send the message to matching subscription.
@@ -943,14 +915,14 @@ impl Client {
                         // Preprocess and drop the message from the buffer if it the predicate
                         // returns true
                         let preprocess = &subscription.preprocess;
-                        if preprocess(&msg) {
-                            println!("dispatch: skip header message after preprocess");
+                        if preprocess(sid, &msg) {
+                            // println!("dispatch: skip header message after preprocess");
                             continue;
                         }
 
                         // Send a message or drop it if the channel is
                         // disconnected or full.
-                        subscription.messages.try_send(msg).unwrap();
+                        subscription.messages.send(msg).unwrap();
                     }
                 }
 

@@ -81,21 +81,21 @@ fn key_value_history() {
     let kv = context
         .create_key_value(&nats::jetstream::KeyValueConfig {
             bucket: "HISTORY".to_string(),
-            history: 10,
+            history: 5,
             ..Default::default()
         })
         .unwrap();
 
-    for i in 0..50 {
+    for i in 0..10 {
         kv.put("value", [i as u8]).unwrap();
     }
 
     let mut history = kv.history("value").unwrap();
-    for i in 0..10 {
+    for i in 5..10 {
         let entry = history.next().unwrap();
 
         assert_eq!(entry.key, "value");
-        assert_eq!(entry.value, [i + 40 as u8]);
+        assert_eq!(entry.value, [i as u8]);
     }
 }
 
