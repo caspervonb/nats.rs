@@ -103,7 +103,8 @@ use std::{
     sync::atomic::Ordering,
 };
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -916,7 +917,7 @@ impl JetStream {
                 }
 
                 if options.opt_start_seq.is_some()
-                    && options.opt_start_seq.unwrap() != info.config.opt_start_seq
+                    && options.opt_start_seq != info.config.opt_start_seq
                 {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
@@ -1090,7 +1091,7 @@ impl JetStream {
                     max_ack_pending: options.max_ack_pending.unwrap_or_default(),
                     max_deliver: options.max_deliver.unwrap_or_default(),
                     max_waiting: options.max_waiting.unwrap_or_default(),
-                    opt_start_seq: options.opt_start_seq.unwrap_or_default(),
+                    opt_start_seq: options.opt_start_seq,
                     opt_start_time: options.opt_start_time,
                     rate_limit: options.rate_limit.unwrap_or_default(),
                     replay_policy: options.replay_policy.unwrap_or_default(),
@@ -1211,6 +1212,9 @@ impl JetStream {
         let has_idle_heartbeat = !consumer_info.config.idle_heartbeat.is_zero();
         let has_flow_control = consumer_info.config.flow_control;
 
+        println!("flow_control: {:?}", consumer_info.config.flow_control);
+        println!("idle_heartbeat: {:?}", consumer_info.config.idle_heartbeat);
+
         // Now create our push subscription
         let push_subscription = PushSubscription::new(
             sid,
@@ -1235,109 +1239,181 @@ impl JetStream {
             let push_subscription = push_subscription.clone();
             let sequence_pair_clone = sequence_pair.clone();
 
-            let handle_consumer_mismatch = move |start_seq: u64| {
+            let handle_sequence_mismatch = move |start_seq: u64| {
+                println!(
+                    "handling consumer mismatch with starting sequence: {}",
+                    start_seq
+                );
+
+                if !is_ordered {
+                    println!("consumer is not ordered");
+                    return false;
+                }
+
                 let stream_name = stream_name.clone();
                 let context = context.clone();
                 let push_subscription = push_subscription.clone();
                 let consumer_config = consumer_config.clone();
                 let sequence_pair = sequence_pair_clone.clone();
 
+                // Immediately mute the subscription so that messages no longer get delivered to it.
+                // If we are already muted then return early.
+                let old_sid = push_subscription.0.sid.load(Ordering::Acquire);
+                if !context.connection.0.client.mute(old_sid).unwrap() {
+                    println!("subscription is already muted");
+                    return true;
+                }
+
                 thread::spawn(move || {
-                    // Replace the subscription with a new delivery subject
-                    let deliver_subject = context.connection.new_inbox();
-                    let result = context.connection.0.client.resubscribe(
-                        push_subscription.0.sid.load(Ordering::Relaxed),
-                        &deliver_subject,
-                    );
+                    println!("resubscribe {}", old_sid);
+                    // Now with less deadlocking concerns we can do the actual resubscription.
+                    let new_deliver_subject = context.connection.new_inbox();
+                    let result = context
+                        .connection
+                        .0
+                        .client
+                        .resubscribe(old_sid, &new_deliver_subject);
 
-                    if let Ok(sid) = result {
-                        // Then change the subscription id for unsubscription
-                        push_subscription.0.sid.store(sid, Ordering::Relaxed);
+                    match result {
+                        Ok(new_sid) => {
+                            println!("add_consumer");
+                            push_subscription.0.sid.store(new_sid, Ordering::Release);
 
-                        let mut consumer_config = consumer_config.clone();
-                        consumer_config.deliver_subject = Some(deliver_subject);
-                        consumer_config.deliver_policy = DeliverPolicy::ByStartSeq;
-                        consumer_config.opt_start_seq = start_seq;
+                            let mut info = sequence_pair.lock();
+                            info.consumer_seq = 0;
+                            drop(info);
 
-                        context.add_consumer(stream_name, consumer_config).ok();
+                            println!("recreating consumer with starting sequence: {}", start_seq);
+                            let mut consumer_config = consumer_config.clone();
+                            consumer_config.deliver_subject = Some(new_deliver_subject);
+                            consumer_config.deliver_policy = DeliverPolicy::ByStartSeq;
+                            consumer_config.opt_start_seq = Some(start_seq);
 
-                        // Reset the consumer sequence counter
-                        let mut info = sequence_pair.lock().unwrap();
-                        info.consumer_seq = 0;
+                            context.add_consumer(stream_name, consumer_config).ok();
+                        }
+                        Err(err) => {
+                            println!("sid is invalid: {}", err);
+                        }
                     }
                 });
 
-                // We're resetting so return false to make the filter drop the message.
-                false
+                // println!(
+                //    "returning true, this is a mismatch in ordered consumer and should filter"
+                //);
+                // We're resetting so return true to mark this the triggering condition as
+                // processed.
+                println!("handle_consumer_mismatch: returning true from mismatch");
+                true
             };
 
             let context = self.clone();
-            self.connection.0.client.set_preprocessor(
-                sid,
-                Box::new(move |message| {
-                    if let Ok(mut info) = sequence_pair.try_lock() {
-                        // Filter out flow control
-                        if message.is_flow_control() {
-                            return true;
-                        }
+            let preprocess = move |message: &Message| {
+                // Filter out flow control
+                if message.is_flow_control() {
+                    println!("got flow control");
+                    // println!("got a flow control message");
+                    return false;
+                }
 
-                        // Track and respond to idle heartbeats
-                        if message.is_idle_heartbeat() {
-                            let maybe_consumer_stalled = message
-                                .headers
-                                .as_ref()
-                                .and_then(|headers| {
-                                    headers
-                                        .get(header::NATS_CONSUMER_STALLED)
-                                        .map(|set| set.iter().cloned().next())
-                                })
-                                .flatten();
+                // Track and respond to idle heartbeats
+                if message.is_idle_heartbeat() {
+                    println!("preprocess: got idle heartbeat");
 
-                            if let Some(consumer_stalled) = maybe_consumer_stalled {
-                                context.connection.try_publish_with_reply_or_headers(
-                                    &consumer_stalled,
-                                    None,
-                                    None,
-                                    b"",
-                                );
-                            }
+                    let maybe_consumer_stalled = message
+                        .headers
+                        .as_ref()
+                        .and_then(|headers| {
+                            headers
+                                .get(header::NATS_CONSUMER_STALLED)
+                                .map(|set| set.iter().cloned().next())
+                        })
+                        .flatten();
 
-                            let maybe_consumer_seq = message
-                                .headers
-                                .as_ref()
-                                .and_then(|headers| {
-                                    headers
-                                        .get(header::NATS_LAST_CONSUMER)
-                                        .map(|set| set.iter().cloned().next())
-                                })
-                                .flatten();
-
-                            if let Some(consumer_seq) = maybe_consumer_seq {
-                                let consumer_seq = consumer_seq.parse::<u64>().unwrap();
-                                if consumer_seq != info.consumer_seq {
-                                    return handle_consumer_mismatch(info.stream_seq + 1);
-                                }
-                            }
-
-                            return true;
-                        }
-
-                        // Track messages for sequence mismatches.
-                        if let Some(message_info) = message.jetstream_message_info() {
-                            if message_info.consumer_seq != info.consumer_seq + 1 {
-                                return handle_consumer_mismatch(info.stream_seq + 1);
-                            }
-
-                            info.stream_seq = message_info.stream_seq;
-                            info.consumer_seq = message_info.consumer_seq;
-                        }
-
-                        return false;
+                    if let Some(consumer_stalled) = maybe_consumer_stalled {
+                        println!("preprocess: got a consumer stalled message");
+                        context.connection.try_publish_with_reply_or_headers(
+                            &consumer_stalled,
+                            None,
+                            None,
+                            b"",
+                        );
                     }
 
-                    false
-                }),
-            )?;
+                    let maybe_consumer_seq = message
+                        .headers
+                        .as_ref()
+                        .and_then(|headers| {
+                            headers
+                                .get(header::NATS_LAST_CONSUMER)
+                                .map(|set| set.iter().cloned().next())
+                        })
+                        .flatten();
+
+                    if let Some(consumer_seq) = maybe_consumer_seq {
+                        let consumer_seq = consumer_seq.parse::<u64>().unwrap();
+
+                        println!("preprocess: trying to lock sequence info (idle heartbeat)");
+                        let sequence_info = sequence_pair.lock();
+                        println!(
+                            "preprocess: testing idle heartbeat consumer sequence: {} == {}",
+                            consumer_seq, sequence_info.consumer_seq
+                        );
+
+                        if consumer_seq != sequence_info.consumer_seq {
+                            println!(
+                                "preprocess: idle heartbeat mismatch: {} != {}",
+                                consumer_seq, sequence_info.consumer_seq,
+                            );
+
+                            return handle_sequence_mismatch(sequence_info.stream_seq + 1);
+                        }
+                    }
+
+                    return false;
+                }
+
+                // Track messages for sequence mismatches.
+                if let Some(message_info) = message.jetstream_message_info() {
+                    println!("prepreocess: trying to lock sequence info");
+                    let mut sequence_info = sequence_pair.lock();
+                    println!(
+                        "preprocess: checking message: {:?} (consumer sequence {} == {}, stream_sequence {})",
+                        &message.data,
+                        &message_info.consumer_seq,
+                        &sequence_info.consumer_seq + 1,
+                        &message_info.stream_seq,
+                    );
+
+                    if message_info.consumer_seq != sequence_info.consumer_seq + 1 {
+                        println!(
+                            "preprocess: message consumer mismatch ({:?} - stream sequence: {}): {} != {}",
+                            &message.data,
+                            message_info.stream_seq,
+                            message_info.consumer_seq,
+                            sequence_info.consumer_seq + 1
+                        );
+
+                        return handle_sequence_mismatch(sequence_info.stream_seq + 1);
+                    }
+
+                    println!(
+                        "preprocess: setting last known sequence as {} : {}",
+                        &message_info.consumer_seq, &message_info.stream_seq
+                    );
+
+                    sequence_info.stream_seq = message_info.stream_seq;
+                    sequence_info.consumer_seq = message_info.consumer_seq;
+                } else {
+                    println!("preprocess: message does not have jetstream token information");
+                }
+
+                false
+            };
+
+            self.connection
+                .0
+                .client
+                .set_preprocessor(sid, Box::new(preprocess))?;
         }
 
         Ok(push_subscription)

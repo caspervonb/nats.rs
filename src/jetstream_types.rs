@@ -117,8 +117,8 @@ pub struct ConsumerConfig {
     pub deliver_policy: DeliverPolicy,
     /// Used in combination with `DeliverPolicy::ByStartSeq` to only select messages arriving
     /// after this sequence number.
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub opt_start_seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opt_start_seq: Option<u64>,
     /// Used in combination with `DeliverPolicy::ByStartTime` to only select messages arriving
     /// after this time.
     #[serde(default, skip_serializing_if = "is_default")]

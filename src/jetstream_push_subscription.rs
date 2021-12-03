@@ -95,6 +95,7 @@ impl PushSubscription {
     /// Returns true if the message was processed and should be filtered out from the user's view.
     fn preprocess(&self, message: &Message) -> bool {
         if message.is_flow_control() {
+            println!("responding to flow control in receiver");
             message.respond(b"").ok();
 
             return true;

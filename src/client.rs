@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::prelude::*;
 use std::io::{self, BufReader, BufWriter, Error, ErrorKind};
@@ -41,6 +41,12 @@ const BUF_CAPACITY: usize = 32 * 1024;
 struct State {
     write: Mutex<WriteState>,
     read: Mutex<ReadState>,
+    meta: Mutex<MetaState>,
+}
+
+struct MetaState {
+    /// Set of subjects that are currently muted.
+    mutes: HashSet<u64>,
 }
 
 struct WriteState {
@@ -114,6 +120,9 @@ impl Client {
         // The client state.
         let client = Client {
             state: Arc::new(State {
+                meta: Mutex::new(MetaState {
+                    mutes: HashSet::new(),
+                }),
                 write: Mutex::new(WriteState {
                     writer: None,
                     flush_kicker,
@@ -196,18 +205,21 @@ impl Client {
 
                             // Flush the writer.
                             let mut write = client.state.write.lock();
+                            let mut read = client.state.read.lock();
+
                             if let Some(writer) = write.writer.as_mut() {
                                 let res = writer.flush();
                                 last = Instant::now();
                                 // If flushing fails, disconnect.
                                 if res.is_err() {
-                                    // NB see locking protocol for state.write and state.read
                                     writer.get_ref().shutdown();
                                     write.writer = None;
-                                    let mut read = client.state.read.lock();
                                     read.pongs.clear();
                                 }
                             }
+
+                            // NB see locking protocol for state.write and state.read
+                            drop(read);
                             drop(write);
                         }
                         Err(RecvTimeoutError::Timeout) => {
@@ -237,6 +249,7 @@ impl Client {
                                 }
                             }
 
+                            // NB see locking protocol for state.write and state.read
                             drop(read);
                             drop(write);
                         }
@@ -404,19 +417,32 @@ impl Client {
         Ok((sid, receiver))
     }
 
+    /// Marks a subscription as muted.
+    pub(crate) fn mute(&self, sid: u64) -> io::Result<bool> {
+        let mut meta = self.state.meta.lock();
+        Ok(meta.mutes.insert(sid))
+    }
+
     /// Resubscribes an existing subscription by unsubscribing from the old subject and subscribing
     /// to the new subject returning a new sid while retaining the existing channel receiver.
-    pub(crate) fn resubscribe(&self, old_sid: u64, subject: &str) -> io::Result<u64> {
+    pub(crate) fn resubscribe(&self, old_sid: u64, new_subject: &str) -> io::Result<u64> {
         // Inject random delays when testing.
         inject_delay();
 
         let mut write = self.state.write.lock();
         let mut read = self.state.read.lock();
 
+        // Check if the client is closed.
+        self.check_shutdown()?;
+
         let subscription = read
             .subscriptions
             .remove(&old_sid)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "subscription not found"))?;
+
+        // Generate a subject ID.
+        let new_sid = write.next_sid;
+        write.next_sid += 1;
 
         // Send an UNSUB and SUB messages.
         if let Some(writer) = write.writer.as_mut() {
@@ -429,10 +455,6 @@ impl Client {
             )?;
         }
 
-        // Generate a subject ID.
-        let new_sid = write.next_sid;
-        write.next_sid += 1;
-
         let queue_group = subscription.queue_group.clone();
         read.subscriptions.insert(new_sid, subscription);
 
@@ -441,7 +463,7 @@ impl Client {
                 writer,
                 ClientOp::Sub {
                     sid: new_sid,
-                    subject,
+                    subject: new_subject,
                     queue_group: queue_group.as_deref(),
                 },
             )?;
@@ -780,6 +802,7 @@ impl Client {
     fn dispatch(&self, mut reader: impl BufRead, connector: &mut Connector) -> io::Result<()> {
         // Handle operations received from the server.
         while let Some(op) = proto::decode(&mut reader)? {
+            println!("dispatch... {:?}", &op);
             // Inject random delays when testing.
             inject_delay();
 
@@ -843,6 +866,23 @@ impl Client {
                     reply_to,
                     payload,
                 } => {
+                    // Ignore muted subscriptions
+                    if self.state.meta.lock().mutes.get(&sid).is_some() {
+                        println!("MUTE: {}", sid);
+                        continue;
+                    }
+
+                    if subject == "foo" {
+                        // ...
+
+                        // randomly drop around 1 in 3 messages
+                        if fastrand::i32(0..3) == 0 {
+                            println!("DROP: {}", sid);
+                            continue;
+                        }
+                    }
+
+                    println!("dispatch: read lock is {}", self.state.read.is_locked());
                     let read = self.state.read.lock();
 
                     // Send the message to matching subscription.
@@ -859,13 +899,17 @@ impl Client {
                         // Preprocess and drop the message from the buffer if it the predicate
                         // returns true
                         let preprocess = &subscription.preprocess;
+                        println!("begin preprocess");
                         if preprocess(&msg) {
+                            println!("preprocess continue");
                             continue;
                         }
 
+                        println!("preprocess ok");
+
                         // Send a message or drop it if the channel is
                         // disconnected or full.
-                        subscription.messages.try_send(msg).ok();
+                        subscription.messages.try_send(msg).unwrap();
                     }
                 }
 
@@ -876,6 +920,14 @@ impl Client {
                     reply_to,
                     payload,
                 } => {
+                    // Ignore muted subscriptions
+                    if self.state.meta.lock().mutes.get(&sid).is_some() {
+                        println!("dispatch: sid is muted: {}", sid);
+                        continue;
+                    }
+
+                    println!("dispatch: read lock is {}", self.state.read.is_locked());
+
                     let read = self.state.read.lock();
                     // Send the message to matching subscription.
                     if let Some(subscription) = read.subscriptions.get(&sid) {
@@ -892,12 +944,13 @@ impl Client {
                         // returns true
                         let preprocess = &subscription.preprocess;
                         if preprocess(&msg) {
+                            println!("dispatch: skip header message after preprocess");
                             continue;
                         }
 
                         // Send a message or drop it if the channel is
                         // disconnected or full.
-                        subscription.messages.try_send(msg).ok();
+                        subscription.messages.try_send(msg).unwrap();
                     }
                 }
 
