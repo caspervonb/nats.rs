@@ -1,3 +1,4 @@
+// Copyright 2020-2021 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -113,10 +114,7 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 const ORDERED_IDLE_HEARTBEAT: Duration = Duration::from_nanos(5_000_000_000);
 
 // TODO re-organize this into a jetstream directory
-pub use crate::jetstream_kv::{
-    KeyValueBucketStatus, KeyValueConfig, KeyValueOperation, KeyValueStore,
-};
-
+pub use crate::jetstream_kv::*;
 pub use crate::jetstream_push_subscription::PushSubscription;
 pub use crate::jetstream_types::*;
 
@@ -920,7 +918,7 @@ impl JetStream {
                 }
 
                 if options.opt_start_seq.is_some()
-                    && options.opt_start_seq.unwrap() != info.config.opt_start_seq
+                    && options.opt_start_seq != info.config.opt_start_seq
                 {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
@@ -1094,7 +1092,7 @@ impl JetStream {
                     max_ack_pending: options.max_ack_pending.unwrap_or_default(),
                     max_deliver: options.max_deliver.unwrap_or_default(),
                     max_waiting: options.max_waiting.unwrap_or_default(),
-                    opt_start_seq: options.opt_start_seq.unwrap_or_default(),
+                    opt_start_seq: options.opt_start_seq,
                     opt_start_time: options.opt_start_time,
                     rate_limit: options.rate_limit.unwrap_or_default(),
                     replay_policy: options.replay_policy.unwrap_or_default(),
@@ -1215,6 +1213,9 @@ impl JetStream {
         let has_idle_heartbeat = !consumer_info.config.idle_heartbeat.is_zero();
         let has_flow_control = consumer_info.config.flow_control;
 
+        println!("flow_control: {:?}", consumer_info.config.flow_control);
+        println!("idle_heartbeat: {:?}", consumer_info.config.idle_heartbeat);
+
         // Now create our push subscription
         let push_subscription = PushSubscription::new(
             sid,
@@ -1225,9 +1226,7 @@ impl JetStream {
         );
 
         // Handle sequence mismatch, etc.
-        // We use a filter to intercept messages before they're pushed onto the channel so that we
-        // can process messages as soon as they arrive.
-        if has_idle_heartbeat || has_flow_control {
+        if is_ordered || has_idle_heartbeat || has_flow_control {
             // Sequences for gap detection
 
             let context = self.clone();
@@ -1236,11 +1235,19 @@ impl JetStream {
                 stream_seq: 0,
             }));
 
+            // We use a filter to intercept messages before they're pushed onto the channel so that we
+            // can process messages as soon as they arrive.
             let push_subscription = push_subscription.clone();
             let sequence_pair_clone = sequence_pair.clone();
 
-            let handle_consumer_mismatch = move |start_seq: u64| {
+            let handle_sequence_mismatch = move |start_seq: u64| {
+                println!(
+                    "handling consumer mismatch with starting sequence: {}",
+                    start_seq
+                );
+
                 if !is_ordered {
+                    println!("consumer is not ordered");
                     return false;
                 }
 
@@ -1250,57 +1257,69 @@ impl JetStream {
                 let consumer_config = consumer_config.clone();
                 let sequence_pair = sequence_pair_clone.clone();
 
-                // Immediately detach subscription so that messages no longer get delivered to it.
-                // We do this to make sure that nothing can be accidentally delivered while the
-                // consumer is being reset.
-                //
-                // If the subscription is already detached this was caused by a message arriving
-                // out of order and we can just ignore it.
+                // Immediately mute the subscription so that messages no longer get delivered to it.
+                // If we are already muted then return early.
                 let old_sid = push_subscription.0.sid.load(Ordering::Acquire);
-
-                if let Ok(subscription) = context.connection.0.client.detatch(old_sid) {
-                    thread::spawn(move || {
-                        // Now with no deadlocking concerns we can do the actual recreation of the
-                        // subscription.
-                        let deliver_subject = context.connection.new_inbox();
-                        let new_sid = context
-                            .connection
-                            .0
-                            .client
-                            .resubscribe(old_sid, subscription, &deliver_subject)
-                            .unwrap();
-
-                        push_subscription.0.sid.store(new_sid, Ordering::Release);
-
-                        let mut consumer_config = consumer_config.clone();
-                        consumer_config.deliver_subject = Some(deliver_subject);
-                        consumer_config.deliver_policy = DeliverPolicy::ByStartSeq;
-                        consumer_config.opt_start_seq = start_seq;
-
-                        context.add_consumer(stream_name, consumer_config).ok();
-
-                        // Reset the consumer sequence counter
-                        let mut info = sequence_pair.lock();
-                        info.consumer_seq = 0;
-                    });
+                if !context.connection.0.client.mute(old_sid).unwrap() {
+                    println!("subscription is already muted");
+                    return true;
                 }
 
+                thread::spawn(move || {
+                    println!("resubscribe {}", old_sid);
+                    // Now with less deadlocking concerns we can do the actual resubscription.
+                    let new_deliver_subject = context.connection.new_inbox();
+                    let result = context
+                        .connection
+                        .0
+                        .client
+                        .resubscribe(old_sid, &new_deliver_subject);
+
+                    match result {
+                        Ok(new_sid) => {
+                            println!("add_consumer");
+                            push_subscription.0.sid.store(new_sid, Ordering::Release);
+
+                            let mut info = sequence_pair.lock();
+                            info.consumer_seq = 0;
+                            drop(info);
+
+                            println!("recreating consumer with starting sequence: {}", start_seq);
+                            let mut consumer_config = consumer_config.clone();
+                            consumer_config.deliver_subject = Some(new_deliver_subject);
+                            consumer_config.deliver_policy = DeliverPolicy::ByStartSeq;
+                            consumer_config.opt_start_seq = Some(start_seq);
+
+                            context.add_consumer(stream_name, consumer_config).ok();
+                        }
+                        Err(err) => {
+                            println!("sid is invalid: {}", err);
+                        }
+                    }
+                });
+
+                // println!(
+                //    "returning true, this is a mismatch in ordered consumer and should filter"
+                //);
                 // We're resetting so return true to mark this the triggering condition as
                 // processed.
+                println!("handle_consumer_mismatch: returning true from mismatch");
                 true
             };
 
             let context = self.clone();
             let preprocess = move |message: &Message| {
-                let mut sequence_info = sequence_pair.lock();
-
                 // Filter out flow control
                 if message.is_flow_control() {
-                    return true;
+                    println!("got flow control");
+                    // println!("got a flow control message");
+                    return false;
                 }
 
                 // Track and respond to idle heartbeats
                 if message.is_idle_heartbeat() {
+                    println!("preprocess: got idle heartbeat");
+
                     let maybe_consumer_stalled = message
                         .headers
                         .as_ref()
@@ -1312,6 +1331,7 @@ impl JetStream {
                         .flatten();
 
                     if let Some(consumer_stalled) = maybe_consumer_stalled {
+                        println!("preprocess: got a consumer stalled message");
                         context.connection.try_publish_with_reply_or_headers(
                             &consumer_stalled,
                             None,
@@ -1332,22 +1352,60 @@ impl JetStream {
 
                     if let Some(consumer_seq) = maybe_consumer_seq {
                         let consumer_seq = consumer_seq.parse::<u64>().unwrap();
+
+                        println!("preprocess: trying to lock sequence info (idle heartbeat)");
+                        let sequence_info = sequence_pair.lock();
+                        println!(
+                            "preprocess: testing idle heartbeat consumer sequence: {} == {}",
+                            consumer_seq, sequence_info.consumer_seq
+                        );
+
                         if consumer_seq != sequence_info.consumer_seq {
-                            return handle_consumer_mismatch(sequence_info.stream_seq + 1);
+                            println!(
+                                "preprocess: idle heartbeat mismatch: {} != {}",
+                                consumer_seq, sequence_info.consumer_seq,
+                            );
+
+                            return handle_sequence_mismatch(sequence_info.stream_seq + 1);
                         }
                     }
 
-                    return true;
+                    return false;
                 }
 
                 // Track messages for sequence mismatches.
                 if let Some(message_info) = message.jetstream_message_info() {
+                    println!("prepreocess: trying to lock sequence info");
+                    let mut sequence_info = sequence_pair.lock();
+                    println!(
+                        "preprocess: checking message: {:?} (consumer sequence {} == {}, stream_sequence {})",
+                        &message.data,
+                        &message_info.consumer_seq,
+                        &sequence_info.consumer_seq + 1,
+                        &message_info.stream_seq,
+                    );
+
                     if message_info.consumer_seq != sequence_info.consumer_seq + 1 {
-                        return handle_consumer_mismatch(sequence_info.stream_seq + 1);
+                        println!(
+                            "preprocess: message consumer mismatch ({:?} - stream sequence: {}): {} != {}",
+                            &message.data,
+                            message_info.stream_seq,
+                            message_info.consumer_seq,
+                            sequence_info.consumer_seq + 1
+                        );
+
+                        return handle_sequence_mismatch(sequence_info.stream_seq + 1);
                     }
+
+                    println!(
+                        "preprocess: setting last known sequence as {} : {}",
+                        &message_info.consumer_seq, &message_info.stream_seq
+                    );
 
                     sequence_info.stream_seq = message_info.stream_seq;
                     sequence_info.consumer_seq = message_info.consumer_seq;
+                } else {
+                    println!("preprocess: message does not have jetstream token information");
                 }
 
                 false
@@ -1666,7 +1724,7 @@ impl JetStream {
         let res: ApiResponse<Res> = serde_json::de::from_slice(&res_msg.data)?;
         match res {
             ApiResponse::Ok(stream_info) => Ok(stream_info),
-            ApiResponse::Err { error } => {
+            ApiResponse::Err { error, .. } => {
                 log::error!(
                     "failed to parse API response: {:?}",
                     std::str::from_utf8(&res_msg.data)

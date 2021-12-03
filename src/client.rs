@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::prelude::*;
 use std::io::{self, BufReader, BufWriter, Error, ErrorKind};
@@ -39,14 +39,14 @@ const BUF_CAPACITY: usize = 32 * 1024;
 ///     Failure to follow this strict rule WILL create
 ///     a deadlock!
 struct State {
-    dispatch: Mutex<DispatchState>,
     write: Mutex<WriteState>,
     read: Mutex<ReadState>,
+    meta: Mutex<MetaState>,
 }
 
-struct DispatchState {
-    /// Current message preprocessors.
-    preprocessors: HashMap<u64, MessagePreprocessor>,
+struct MetaState {
+    /// Set of subjects that are currently muted.
+    mutes: HashSet<u64>,
 }
 
 struct WriteState {
@@ -84,10 +84,11 @@ struct ReadState {
 }
 
 /// A registered subscription.
-pub(crate) struct Subscription {
+struct Subscription {
     subject: String,
     queue_group: Option<String>,
     messages: channel::Sender<Message>,
+    preprocess: MessagePreprocessor,
 }
 
 /// A NATS client.
@@ -119,8 +120,8 @@ impl Client {
         // The client state.
         let client = Client {
             state: Arc::new(State {
-                dispatch: Mutex::new(DispatchState {
-                    preprocessors: HashMap::new(),
+                meta: Mutex::new(MetaState {
+                    mutes: HashSet::new(),
                 }),
                 write: Mutex::new(WriteState {
                     writer: None,
@@ -211,14 +212,15 @@ impl Client {
                                 last = Instant::now();
                                 // If flushing fails, disconnect.
                                 if res.is_err() {
-                                    // NB see locking protocol for state.write and state.read
                                     writer.get_ref().shutdown();
                                     write.writer = None;
                                     read.pongs.clear();
                                 }
                             }
-                            drop(write);
+
+                            // NB see locking protocol for state.write and state.read
                             drop(read);
+                            drop(write);
                         }
                         Err(RecvTimeoutError::Timeout) => {
                             let mut write = client.state.write.lock();
@@ -247,6 +249,7 @@ impl Client {
                                 }
                             }
 
+                            // NB see locking protocol for state.write and state.read
                             drop(read);
                             drop(write);
                         }
@@ -403,6 +406,7 @@ impl Client {
                 subject: subject.to_string(),
                 queue_group: queue_group.map(ToString::to_string),
                 messages: sender,
+                preprocess: Box::new(|_| false),
             },
         );
 
@@ -413,75 +417,60 @@ impl Client {
         Ok((sid, receiver))
     }
 
-    /// Immediatly try to detatch an existing subscription returning it to later resubscription.
-    pub(crate) fn detatch(&self, sid: u64) -> io::Result<Subscription> {
-        let mut read = self.state.read.lock();
-
-        let subscription = read
-            .subscriptions
-            .remove(&sid)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "subscription not found"))?;
-
-        // NB see locking protocol for state.write and state.read
-        drop(read);
-
-        Ok(subscription)
+    /// Marks a subscription as muted.
+    pub(crate) fn mute(&self, sid: u64) -> io::Result<bool> {
+        let mut meta = self.state.meta.lock();
+        Ok(meta.mutes.insert(sid))
     }
 
-    /// Resubscribes a detached subscription to a new subject.
-    ///
-    /// Can be used together with `detach` to hotswap a subscription.
-    pub(crate) fn resubscribe(
-        &self,
-        sid: u64,
-        subscription: Subscription,
-        subject: &str,
-    ) -> io::Result<u64> {
+    /// Resubscribes an existing subscription by unsubscribing from the old subject and subscribing
+    /// to the new subject returning a new sid while retaining the existing channel receiver.
+    pub(crate) fn resubscribe(&self, old_sid: u64, new_subject: &str) -> io::Result<u64> {
         // Inject random delays when testing.
         inject_delay();
 
         let mut write = self.state.write.lock();
         let mut read = self.state.read.lock();
-        let mut dispatch = self.state.dispatch.lock();
 
-        // Generate a new subscription id.
+        // Check if the client is closed.
+        self.check_shutdown()?;
+
+        let subscription = read
+            .subscriptions
+            .remove(&old_sid)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "subscription not found"))?;
+
+        // Generate a subject ID.
         let new_sid = write.next_sid;
         write.next_sid += 1;
 
-        // Move the preprocessor to the next subscription id
-        if let Some(preprocessor) = dispatch.preprocessors.remove(&sid) {
-            dispatch.preprocessors.insert(new_sid, preprocessor);
-        }
-
-        // Send an UNSUB message for the old subscription.
+        // Send an UNSUB and SUB messages.
         if let Some(writer) = write.writer.as_mut() {
             proto::encode(
                 writer,
                 ClientOp::Unsub {
-                    sid,
+                    sid: old_sid,
                     max_msgs: None,
+                },
+            )?;
+        }
+
+        let queue_group = subscription.queue_group.clone();
+        read.subscriptions.insert(new_sid, subscription);
+
+        if let Some(writer) = write.writer.as_mut() {
+            proto::encode(
+                writer,
+                ClientOp::Sub {
+                    sid: new_sid,
+                    subject: new_subject,
+                    queue_group: queue_group.as_deref(),
                 },
             )?;
             write.flush_kicker.try_send(()).ok();
         }
 
-        // Insert the subscription
-        let queue_group = subscription.queue_group.clone();
-        read.subscriptions.insert(sid, subscription);
-
-        // Send a SUB message for the new subscription.
-        if let Some(writer) = write.writer.as_mut() {
-            let op = ClientOp::Sub {
-                subject,
-                queue_group: queue_group.as_deref(),
-                sid: new_sid,
-            };
-            proto::encode(writer, op).ok();
-            write.flush_kicker.try_send(()).ok();
-        }
-
         // NB see locking protocol for state.write and state.read
-        drop(dispatch);
         drop(read);
         drop(write);
 
@@ -523,7 +512,7 @@ impl Client {
 
     /// Sets the message preprocessor for a subscription.
     ///
-    /// This predicate is called after a message arrives and before it is queued up to subscription
+    /// This predicate is called afer a message arrives and before it is queued up to subscription
     /// channel.
     ///
     /// If the predicate returns true the message is considered consumed and is not queued on the
@@ -531,10 +520,16 @@ impl Client {
     pub(crate) fn set_preprocessor(
         &self,
         sid: u64,
-        preprocessor: MessagePreprocessor,
+        preprocess: MessagePreprocessor,
     ) -> io::Result<()> {
-        let mut dispatch = self.state.dispatch.lock();
-        dispatch.preprocessors.insert(sid, preprocessor);
+        let mut read = self.state.read.lock();
+
+        if let Some(subscription) = read.subscriptions.get_mut(&sid) {
+            subscription.preprocess = preprocess;
+        }
+
+        // NB see locking protocol for state.write and state.read
+        drop(read);
 
         Ok(())
     }
@@ -807,6 +802,7 @@ impl Client {
     fn dispatch(&self, mut reader: impl BufRead, connector: &mut Connector) -> io::Result<()> {
         // Handle operations received from the server.
         while let Some(op) = proto::decode(&mut reader)? {
+            println!("dispatch... {:?}", &op);
             // Inject random delays when testing.
             inject_delay();
 
@@ -870,28 +866,50 @@ impl Client {
                     reply_to,
                     payload,
                 } => {
-                    let message = Message {
-                        subject,
-                        reply: reply_to,
-                        data: payload,
-                        headers: None,
-                        client: Some(self.clone()),
-                        double_acked: Default::default(),
-                    };
+                    // Ignore muted subscriptions
+                    if self.state.meta.lock().mutes.get(&sid).is_some() {
+                        println!("MUTE: {}", sid);
+                        continue;
+                    }
 
-                    // Preprocess before acquiring any locks so that the first will be called
-                    // without any existing read/write locks.
-                    let mut dispatch = self.state.dispatch.lock();
-                    if let Some(preprocess) = dispatch.preprocessors.get_mut(&sid) {
-                        if preprocess(&message) {
+                    if subject == "foo" {
+                        // ...
+
+                        // randomly drop around 1 in 3 messages
+                        if fastrand::i32(0..3) == 0 {
+                            println!("DROP: {}", sid);
                             continue;
                         }
                     }
 
-                    // Then try to send the message
+                    println!("dispatch: read lock is {}", self.state.read.is_locked());
                     let read = self.state.read.lock();
+
+                    // Send the message to matching subscription.
                     if let Some(subscription) = read.subscriptions.get(&sid) {
-                        subscription.messages.try_send(message).ok();
+                        let msg = Message {
+                            subject,
+                            reply: reply_to,
+                            data: payload,
+                            headers: None,
+                            client: Some(self.clone()),
+                            double_acked: Default::default(),
+                        };
+
+                        // Preprocess and drop the message from the buffer if it the predicate
+                        // returns true
+                        let preprocess = &subscription.preprocess;
+                        println!("begin preprocess");
+                        if preprocess(&msg) {
+                            println!("preprocess continue");
+                            continue;
+                        }
+
+                        println!("preprocess ok");
+
+                        // Send a message or drop it if the channel is
+                        // disconnected or full.
+                        subscription.messages.try_send(msg).unwrap();
                     }
                 }
 
@@ -902,28 +920,37 @@ impl Client {
                     reply_to,
                     payload,
                 } => {
-                    let message = Message {
-                        subject,
-                        reply: reply_to,
-                        data: payload,
-                        headers: Some(headers),
-                        client: Some(self.clone()),
-                        double_acked: Default::default(),
-                    };
-
-                    // Preprocess before acquiring any locks so that the first will be called
-                    // without any existing read/write locks.
-                    let mut dispatch = self.state.dispatch.lock();
-                    if let Some(preprocess) = dispatch.preprocessors.get_mut(&sid) {
-                        if preprocess(&message) {
-                            continue;
-                        }
+                    // Ignore muted subscriptions
+                    if self.state.meta.lock().mutes.get(&sid).is_some() {
+                        println!("dispatch: sid is muted: {}", sid);
+                        continue;
                     }
 
-                    // Then try to send the message
+                    println!("dispatch: read lock is {}", self.state.read.is_locked());
+
                     let read = self.state.read.lock();
+                    // Send the message to matching subscription.
                     if let Some(subscription) = read.subscriptions.get(&sid) {
-                        subscription.messages.try_send(message).ok();
+                        let msg = Message {
+                            subject,
+                            reply: reply_to,
+                            data: payload,
+                            headers: Some(headers),
+                            client: Some(self.clone()),
+                            double_acked: Default::default(),
+                        };
+
+                        // Preprocess and drop the message from the buffer if it the predicate
+                        // returns true
+                        let preprocess = &subscription.preprocess;
+                        if preprocess(&msg) {
+                            println!("dispatch: skip header message after preprocess");
+                            continue;
+                        }
+
+                        // Send a message or drop it if the channel is
+                        // disconnected or full.
+                        subscription.messages.try_send(msg).unwrap();
                     }
                 }
 

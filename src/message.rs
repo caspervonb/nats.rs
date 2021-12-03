@@ -27,7 +27,7 @@ use crate::{
 use chrono::*;
 
 /// A predicate used to preprocess messages as they arrive over the wire.
-pub(crate) type MessagePreprocessor = Box<dyn FnMut(&Message) -> bool + Send + Sync>;
+pub(crate) type MessagePreprocessor = Box<dyn Fn(&Message) -> bool + Send + Sync>;
 pub(crate) const MESSAGE_NOT_BOUND: &str = "message not bound to a connection";
 
 /// A message received on a subject.
