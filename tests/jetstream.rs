@@ -421,6 +421,30 @@ fn jetstream_queue_subscribe() {
 }
 
 #[test]
+fn jetstream_pull_subscribe() {
+    let server = util::run_server("tests/configs/jetstream.conf");
+    let client = nats::connect(&server.client_url()).unwrap();
+    let context = nats::jetstream::new(client);
+
+    context
+        .add_stream(StreamConfig {
+            name: "TEST".to_string(),
+            subjects: vec!["test".to_string(), "foo".to_string(), "bar".to_string()],
+            ..Default::default()
+        })
+        .unwrap();
+
+    // Durable name is required for now,should error with an empty durable name.
+    context.pull_subscribe("bar", "").unwrap_err();
+
+    // Now create a durable pull subscription and consumer
+    let subscription = context.pull_subscribe("bar", "pull").unwrap();
+
+    // The first batch if available should be delivered and queued up.
+    let iterator = context.fetch().unwrap();
+}
+
+#[test]
 fn jetstream_flow_control() {
     let s = util::run_server("tests/configs/jetstream.conf");
     let nc = nats::connect(&s.client_url()).unwrap();
