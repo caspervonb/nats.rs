@@ -823,6 +823,81 @@ pub struct Client {
 }
 
 impl Client {
+    pub async fn with_options<A: ToServerAddrs>(
+        addrs: A,
+        options: ConnectOptions,
+    ) -> Result<Client, io::Error> {
+        let mut connector = Connector {
+            server_addrs: addrs.to_server_addrs()?.into_iter().collect(),
+            options: options.clone(),
+        };
+
+        let (_, connection) = connector.try_connect().await?;
+        let subscription_context = Arc::new(Mutex::new(SubscriptionContext::new()));
+        let mut connection_handler =
+            ConnectionHandler::new(connection, connector, subscription_context.clone());
+
+        // TODO make channel size configurable
+        let (sender, receiver) = mpsc::channel(128);
+        let client = Client::new(sender.clone(), subscription_context);
+        let connect_info = ConnectInfo {
+            tls_required: options.tls_required,
+            // FIXME(tp): have optional name
+            name: Some("beta-rust-client".to_string()),
+            pedantic: false,
+            verbose: false,
+            lang: LANG.to_string(),
+            version: VERSION.to_string(),
+            protocol: Protocol::Dynamic,
+            user: None,
+            pass: None,
+            auth_token: None,
+            user_jwt: None,
+            nkey: None,
+            signature: None,
+            echo: true,
+            headers: true,
+            no_responders: true,
+        };
+        client
+            .sender
+            .send(Command::Connect(connect_info))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to send connect"))?;
+        client
+            .sender
+            .send(Command::Ping)
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to send ping"))?;
+
+        tokio::spawn({
+            let sender = sender.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(options.ping_interval).await;
+                    match sender.send(Command::Ping).await {
+                        Ok(()) => {}
+                        Err(_) => return,
+                    }
+                }
+            }
+        });
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(options.flush_interval).await;
+                match sender.send(Command::TryFlush).await {
+                    Ok(()) => {}
+                    Err(_) => return,
+                }
+            }
+        });
+
+        task::spawn(async move { connection_handler.process(receiver).await });
+
+        Ok(client)
+    }
+
     pub(crate) fn new(
         sender: mpsc::Sender<Command>,
         subscription_context: Arc<Mutex<SubscriptionContext>>,
