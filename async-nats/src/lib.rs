@@ -1196,11 +1196,15 @@ impl Drop for Subscriber {
         tokio::spawn({
             let sender = self.sender.clone();
             let sid = self.sid;
+
             async move {
-                sender
-                    .send(Command::Unsubscribe { sid, max: None })
-                    .await
-                    .ok();
+                let mut done = false;
+                while !done {
+                    done = sender
+                        .send(Command::Unsubscribe { sid, max: None })
+                        .await
+                        .is_ok();
+                }
             }
         });
     }
