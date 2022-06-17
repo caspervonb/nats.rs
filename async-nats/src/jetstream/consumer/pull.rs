@@ -27,7 +27,7 @@ use super::{AckPolicy, Consumer, DeliverPolicy, FromConsumer, IntoConsumerConfig
 use jetstream::consumer;
 
 impl Consumer<Config> {
-    pub async fn request_batch<I: Into<BatchConfig>>(
+    async fn request_batch<I: Into<BatchConfig>>(
         &self,
         batch: I,
         inbox: String,
