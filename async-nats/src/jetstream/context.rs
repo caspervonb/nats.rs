@@ -113,13 +113,12 @@ impl Context {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(
+    pub fn publish(
         &self,
         subject: String,
         payload: Bytes,
     ) -> Result<PublishAckFuture, Error> {
-        self.send_publish(subject, Publish::build().payload(payload))
-            .await
+        Publish::from(self.clone()).payload(payload)
     }
 
     /// Publish a message with headers to a given subject associated with a stream and returns an acknowledgment from
@@ -141,14 +140,13 @@ impl Context {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish_with_headers(
+    pub fn publish_with_headers(
         &self,
         subject: String,
         headers: crate::header::HeaderMap,
         payload: Bytes,
     ) -> Result<PublishAckFuture, Error> {
-        self.send_publish(subject, Publish::build().payload(payload).headers(headers))
-            .await
+        Publish::from(self.clone()).payload(payload).headers(headers)
     }
 
     /// Publish a message built by [Publish] and returns an acknowledgment future.
@@ -876,10 +874,14 @@ pub struct Publish {
     payload: Bytes,
     headers: Option<header::HeaderMap>,
 }
+
 impl Publish {
     /// Creates a new custom Publish struct to be used with.
-    pub fn build() -> Self {
-        Default::default()
+    pub fn from(context: Context) -> Self {
+        Publish {
+            context,
+            ...Default::default()
+        }
     }
 
     /// Sets the payload for the message.
@@ -887,6 +889,7 @@ impl Publish {
         self.payload = payload;
         self
     }
+
     /// Adds headers to the message.
     pub fn headers(mut self, headers: HeaderMap) -> Self {
         self.headers = Some(headers);
@@ -936,3 +939,17 @@ impl Publish {
         )
     }
 }
+
+impl IntoFuture for Publish {
+    type Output = Result<PublishAckFuture, Error>;
+
+    type IntoFuture = Pin<Box<dyn Future<Output = Result<PublishAckFuture, Error>> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        // TODO remove send_publish
+        Box::pin(std::future::IntoFuture::into_future(
+            self.context.send_publish(self.subject, self)
+        ))
+    }
+}
+

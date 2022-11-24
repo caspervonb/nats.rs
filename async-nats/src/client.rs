@@ -278,7 +278,7 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn request(&self, subject: String, payload: Bytes) -> Result<Message, Error> {
+    pub fn request(&self, subject: String, payload: Bytes) -> Result<Message, Error> {
         trace!("request sent to subject: {} ({})", subject, payload.len());
         let request = Request::new().payload(payload);
         self.send_request(subject, request).await
@@ -298,14 +298,13 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn request_with_headers(
+    pub fn request_with_headers(
         &self,
         subject: String,
         headers: HeaderMap,
         payload: Bytes,
-    ) -> Result<Message, Error> {
-        let request = Request::new().headers(headers).payload(payload);
-        self.send_request(subject, request).await
+    ) -> Request {
+        Request::new().headers(headers).payload(payload)
     }
 
     /// Sends the request created by the [Request].
@@ -483,6 +482,7 @@ impl Client {
 /// Used for building customized requests.
 #[derive(Default)]
 pub struct Request {
+    client: Client,
     payload: Option<Bytes>,
     headers: Option<HeaderMap>,
     timeout: Option<Option<Duration>>,
@@ -490,8 +490,11 @@ pub struct Request {
 }
 
 impl Request {
-    pub fn new() -> Request {
-        Default::default()
+    pub(crate) fn from_client(client: Client) -> Request {
+        Request {
+            client,
+            ...Default::default()
+        }
     }
 
     /// Sets the payload of the request. If not used, empty payload will be sent.
@@ -542,7 +545,7 @@ impl Request {
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), async_nats::Error> {
     /// let client = async_nats::connect("demo.nats.io").await?;
-    /// let request = async_nats::Request::new()
+    /// let request = client.request()
     ///     .timeout(Some(std::time::Duration::from_secs(15)))
     ///     .payload("data".into());
     /// client.send_request("service".into(), request).await?;
