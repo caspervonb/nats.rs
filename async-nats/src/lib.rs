@@ -254,12 +254,10 @@ pub enum Command {
         sid: u64,
         max: Option<u64>,
     },
-    Ping,
     Flush {
         result: oneshot::Sender<Result<(), io::Error>>,
     },
     TryFlush,
-    Connect(ConnectInfo),
 }
 
 /// `ClientOp` represents all actions of `Client`.
