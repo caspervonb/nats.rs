@@ -668,7 +668,7 @@ mod read_op {
                 headers: Some(HeaderMap::default()),
                 payload: "".into(),
                 status: Some(StatusCode::NOT_FOUND),
-                description: Some("No Messages".to_string()),
+                description: Some("No Messages".into()),
                 length: 7 + 8 + 28,
             })
         );
@@ -735,7 +735,7 @@ mod read_op {
                 headers: Some(HeaderMap::default()),
                 payload: "".into(),
                 status: Some(StatusCode::NOT_FOUND),
-                description: Some("No Messages".to_string()),
+                description: Some("No Messages".into()),
                 length: 7 + 8 + 28,
             })
         );

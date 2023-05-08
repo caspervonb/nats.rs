@@ -235,8 +235,8 @@ pub trait ServiceExt {
     /// let client = async_nats::connect("demo.nats.io").await?;
     /// let mut service = client
     ///     .add_service(async_nats::service::Config {
-    ///         name: "generator".to_string(),
-    ///         version: "1.0.0".to_string(),
+    ///         name: "generator".into(),
+    ///         version: "1.0.0".into(),
     ///         schema: None,
     ///         description: None,
     ///         stats_handler: None,
@@ -307,8 +307,8 @@ impl ServiceExt for crate::Client {
 /// let client = async_nats::connect("demo.nats.io").await?;
 /// let mut service = client
 ///     .add_service(async_nats::service::Config {
-///         name: "generator".to_string(),
-///         version: "1.0.0".to_string(),
+///         name: "generator".into(),
+///         version: "1.0.0".into(),
 ///         schema: None,
 ///         description: None,
 ///         stats_handler: None,
@@ -410,7 +410,7 @@ impl Service {
         let started = time::OffsetDateTime::now_utc();
         let subjects = Arc::new(Mutex::new(Vec::new()));
         let info = Info {
-            response_type: "io.nats.micro.v1.info_response".to_string(),
+            response_type: "io.nats.micro.v1.info_response".into(),
             name: config.name.clone(),
             id: id.clone(),
             description: config.description.clone(),
@@ -488,7 +488,7 @@ impl Service {
                             }
 
                             let stats = serde_json::to_vec(&StatsResponse {
-                                response_type: "io.nats.micro.v1.stats_response".to_string(),
+                                response_type: "io.nats.micro.v1.stats_response".into(),
                                 name: info.name.clone(),
                                 id: info.id.clone(),
                                 version: info.version.clone(),
@@ -702,8 +702,8 @@ impl Request {
     /// use async_nats::service::ServiceExt;
     /// # let client = async_nats::connect("demo.nats.io").await?;
     /// # let mut service = client.add_service(async_nats::service::Config {
-    /// #     name: "generator".to_string(),
-    /// #     version: "1.0.0".to_string(),
+    /// #     name: "generator".into(),
+    /// #     version: "1.0.0".into(),
     /// #     schema: None,
     /// #     description: None,
     ///     stats_handler: None,

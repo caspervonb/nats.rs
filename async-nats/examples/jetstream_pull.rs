@@ -6,7 +6,7 @@ use futures::StreamExt;
 #[tokio::main]
 async fn main() -> Result<(), async_nats::Error> {
     // Use the NATS_URL env variable if defined, otherwise fallback to the default.
-    let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+    let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
 
     // Create an unauthenticated connection to NATS.
     let client = async_nats::connect(nats_url).await?;
@@ -22,13 +22,13 @@ async fn main() -> Result<(), async_nats::Error> {
     let consumer: PullConsumer = jetstream
         .create_stream(jetstream::stream::Config {
             name: stream_name,
-            subjects: vec!["events.>".to_string()],
+            subjects: vec!["events.>".into()],
             ..Default::default()
         })
         .await?
         // Then, on that `Stream` use method to create Consumer and bind to it too.
         .create_consumer(jetstream::consumer::pull::Config {
-            durable_name: Some("consumer".to_string()),
+            durable_name: Some("consumer".into()),
             ..Default::default()
         })
         .await?;

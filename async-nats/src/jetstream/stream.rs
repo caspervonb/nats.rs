@@ -123,8 +123,8 @@ impl Stream {
     ///
     /// let stream = jetstream
     ///     .create_stream(async_nats::jetstream::stream::Config {
-    ///         name: "events".to_string(),
-    ///         subjects: vec!["events.>".to_string()],
+    ///         name: "events".into(),
+    ///         subjects: vec!["events.>".into()],
     ///         allow_direct: true,
     ///         ..Default::default()
     ///     })
@@ -205,8 +205,8 @@ impl Stream {
     ///
     /// let stream = jetstream
     ///     .create_stream(async_nats::jetstream::stream::Config {
-    ///         name: "events".to_string(),
-    ///         subjects: vec!["events.>".to_string()],
+    ///         name: "events".into(),
+    ///         subjects: vec!["events.>".into()],
     ///         allow_direct: true,
     ///         ..Default::default()
     ///     })
@@ -273,8 +273,8 @@ impl Stream {
     ///
     /// let stream = jetstream
     ///     .create_stream(async_nats::jetstream::stream::Config {
-    ///         name: "events".to_string(),
-    ///         subjects: vec!["events.>".to_string()],
+    ///         name: "events".into(),
+    ///         subjects: vec!["events.>".into()],
     ///         allow_direct: true,
     ///         ..Default::default()
     ///     })
@@ -336,8 +336,8 @@ impl Stream {
     ///
     /// let stream = jetstream
     ///     .create_stream(async_nats::jetstream::stream::Config {
-    ///         name: "events".to_string(),
-    ///         subjects: vec!["events.>".to_string()],
+    ///         name: "events".into(),
+    ///         subjects: vec!["events.>".into()],
     ///         allow_direct: true,
     ///         ..Default::default()
     ///     })
@@ -414,13 +414,13 @@ impl Stream {
     ///
     /// let stream = context
     ///     .get_or_create_stream(async_nats::jetstream::stream::Config {
-    ///         name: "events".to_string(),
+    ///         name: "events".into(),
     ///         max_messages: 10_000,
     ///         ..Default::default()
     ///     })
     ///     .await?;
     ///
-    /// let publish_ack = context.publish("events".to_string(), "data".into()).await?;
+    /// let publish_ack = context.publish("events".into(), "data".into()).await?;
     /// let raw_message = stream.get_raw_message(publish_ack.await?.sequence).await?;
     /// println!("Retrieved raw message {:?}", raw_message);
     /// # Ok(())
@@ -460,13 +460,13 @@ impl Stream {
     ///
     /// let stream = context
     ///     .get_or_create_stream(async_nats::jetstream::stream::Config {
-    ///         name: "events".to_string(),
+    ///         name: "events".into(),
     ///         max_messages: 10_000,
     ///         ..Default::default()
     ///     })
     ///     .await?;
     ///
-    /// let publish_ack = context.publish("events".to_string(), "data".into()).await?;
+    /// let publish_ack = context.publish("events".into(), "data".into()).await?;
     /// let raw_message = stream.get_last_raw_message_by_subject("events").await?;
     /// println!("Retrieved raw message {:?}", raw_message);
     /// # Ok(())
@@ -500,13 +500,13 @@ impl Stream {
     ///
     /// let stream = context
     ///     .get_or_create_stream(async_nats::jetstream::stream::Config {
-    ///         name: "events".to_string(),
+    ///         name: "events".into(),
     ///         max_messages: 10_000,
     ///         ..Default::default()
     ///     })
     ///     .await?;
     ///
-    /// let publish_ack = context.publish("events".to_string(), "data".into()).await?;
+    /// let publish_ack = context.publish("events".into(), "data".into()).await?;
     /// stream.delete_message(publish_ack.await?.sequence).await?;
     /// # Ok(())
     /// # }
@@ -592,7 +592,7 @@ impl Stream {
     /// let stream = jetstream.get_stream("events").await?;
     /// let info = stream
     ///     .create_consumer(consumer::pull::Config {
-    ///         durable_name: Some("pull".to_string()),
+    ///         durable_name: Some("pull".into()),
     ///         ..Default::default()
     ///     })
     ///     .await?;
@@ -608,7 +608,7 @@ impl Stream {
         let subject = {
             if self.context.client.is_server_compatible(2, 9, 0) {
                 let filter = if config.filter_subject.is_empty() {
-                    "".to_string()
+                    "".into()
                 } else {
                     format!(".{}", config.filter_subject)
                 };
@@ -744,7 +744,7 @@ impl Stream {
     ///     .get_or_create_consumer(
     ///         "pull",
     ///         consumer::pull::Config {
-    ///             durable_name: Some("pull".to_string()),
+    ///             durable_name: Some("pull".into()),
     ///             ..Default::default()
     ///         },
     ///     )

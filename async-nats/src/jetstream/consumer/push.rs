@@ -55,22 +55,22 @@ impl Consumer<Config> {
     ///
     /// let stream = jetstream
     ///     .get_or_create_stream(async_nats::jetstream::stream::Config {
-    ///         name: "events".to_string(),
+    ///         name: "events".into(),
     ///         max_messages: 10_000,
     ///         ..Default::default()
     ///     })
     ///     .await?;
     ///
     /// jetstream
-    ///     .publish("events".to_string(), "data".into())
+    ///     .publish("events".into(), "data".into())
     ///     .await?;
     ///
     /// let consumer: PushConsumer = stream
     ///     .get_or_create_consumer(
     ///         "consumer",
     ///         async_nats::jetstream::consumer::push::Config {
-    ///             durable_name: Some("consumer".to_string()),
-    ///             deliver_subject: "deliver".to_string(),
+    ///             durable_name: Some("consumer".into()),
+    ///             deliver_subject: "deliver".into(),
     ///             ..Default::default()
     ///         },
     ///     )

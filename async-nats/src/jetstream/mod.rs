@@ -30,21 +30,21 @@
 //!
 //! let stream = jetstream
 //!     .get_or_create_stream(async_nats::jetstream::stream::Config {
-//!         name: "events".to_string(),
+//!         name: "events".into(),
 //!         max_messages: 10_000,
 //!         ..Default::default()
 //!     })
 //!     .await?;
 //!
 //! jetstream
-//!     .publish("events".to_string(), "data".into())
+//!     .publish("events".into(), "data".into())
 //!     .await?;
 //!
 //! let consumer = stream
 //!     .get_or_create_consumer(
 //!         "consumer",
 //!         async_nats::jetstream::consumer::pull::Config {
-//!             durable_name: Some("consumer".to_string()),
+//!             durable_name: Some("consumer".into()),
 //!             ..Default::default()
 //!         },
 //!     )
@@ -70,21 +70,21 @@
 //!
 //! let stream = jetstream
 //!     .get_or_create_stream(async_nats::jetstream::stream::Config {
-//!         name: "events".to_string(),
+//!         name: "events".into(),
 //!         max_messages: 10_000,
 //!         ..Default::default()
 //!     })
 //!     .await?;
 //!
 //! jetstream
-//!     .publish("events".to_string(), "data".into())
+//!     .publish("events".into(), "data".into())
 //!     .await?;
 //!
 //! let consumer = stream
 //!     .get_or_create_consumer(
 //!         "consumer",
 //!         async_nats::jetstream::consumer::pull::Config {
-//!             durable_name: Some("consumer".to_string()),
+//!             durable_name: Some("consumer".into()),
 //!             ..Default::default()
 //!         },
 //!     )
@@ -129,7 +129,7 @@ pub use message::{AckKind, Message};
 /// let jetstream = async_nats::jetstream::new(client);
 ///
 /// jetstream
-///     .publish("subject".to_string(), "data".into())
+///     .publish("subject".into(), "data".into())
 ///     .await?;
 /// # Ok(())
 /// # }
@@ -150,7 +150,7 @@ pub fn new(client: Client) -> Context {
 /// let jetstream = async_nats::jetstream::with_domain(client, "hub");
 ///
 /// jetstream
-///     .publish("subject".to_string(), "data".into())
+///     .publish("subject".into(), "data".into())
 ///     .await?;
 /// # Ok(())
 /// # }
@@ -171,7 +171,7 @@ pub fn with_domain<T: AsRef<str>>(client: Client, domain: T) -> Context {
 /// let jetstream = async_nats::jetstream::with_prefix(client, "JS.acc@hub.API");
 ///
 /// jetstream
-///     .publish("subject".to_string(), "data".into())
+///     .publish("subject".into(), "data".into())
 ///     .await?;
 /// # Ok(())
 /// # }

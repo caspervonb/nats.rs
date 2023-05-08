@@ -15,7 +15,7 @@ struct Payload {
 async fn main() -> Result<(), async_nats::Error> {
     // Use the NATS_URL env variable if defined, otherwise fallback
     // to the default.
-    let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+    let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
 
     let client = async_nats::connect(nats_url).await?;
 
@@ -24,7 +24,7 @@ async fn main() -> Result<(), async_nats::Error> {
 
     // Construct a Payload value and serialize it.
     let payload = Payload {
-        foo: "bar".to_string(),
+        foo: "bar".into(),
         bar: 27,
     };
     let bytes = serde_json::to_vec(&json!(payload))?;

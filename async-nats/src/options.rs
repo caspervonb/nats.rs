@@ -106,7 +106,7 @@ impl Default for ConnectOptions {
                     tracing::info!("event: {}", event);
                 })
             })),
-            inbox_prefix: "_INBOX".to_string(),
+            inbox_prefix: "_INBOX".into(),
             request_timeout: Some(Duration::from_secs(10)),
             retry_on_initial_connect: false,
             ignore_discovered_servers: false,

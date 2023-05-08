@@ -139,7 +139,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -172,7 +172,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -213,7 +213,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -381,7 +381,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -411,7 +411,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -439,7 +439,7 @@ impl Store {
             .stream
             .create_consumer(super::consumer::push::OrderedConfig {
                 deliver_subject: self.stream.context.client.new_inbox(),
-                description: Some("kv watch consumer".to_string()),
+                description: Some("kv watch consumer".into()),
                 filter_subject: subject,
                 replay_policy: super::consumer::ReplayPolicy::Instant,
                 deliver_policy,
@@ -467,7 +467,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -507,7 +507,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -557,7 +557,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -606,7 +606,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -652,7 +652,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -677,7 +677,7 @@ impl Store {
             .stream
             .create_consumer(super::consumer::push::OrderedConfig {
                 deliver_subject: self.stream.context.client.new_inbox(),
-                description: Some("kv history consumer".to_string()),
+                description: Some("kv history consumer".into()),
                 filter_subject: subject,
                 replay_policy: super::consumer::ReplayPolicy::Instant,
                 ..Default::default()
@@ -706,7 +706,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -729,7 +729,7 @@ impl Store {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -746,7 +746,7 @@ impl Store {
             .stream
             .create_consumer(super::consumer::push::OrderedConfig {
                 deliver_subject: self.stream.context.client.new_inbox(),
-                description: Some("kv history consumer".to_string()),
+                description: Some("kv history consumer".into()),
                 filter_subject: subject,
                 headers_only: true,
                 replay_policy: super::consumer::ReplayPolicy::Instant,

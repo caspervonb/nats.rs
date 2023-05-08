@@ -18,7 +18,7 @@ use futures::{StreamExt, TryStreamExt};
 
 #[tokio::main]
 async fn main() -> Result<(), async_nats::Error> {
-    let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+    let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
 
     let client = async_nats::connect(nats_url).await?;
 
@@ -28,7 +28,7 @@ async fn main() -> Result<(), async_nats::Error> {
     // A key-value (KV) bucket is created by specifying a bucket name.
     let kv = jetstream
         .create_key_value(async_nats::jetstream::kv::Config {
-            bucket: "profiles".to_string(),
+            bucket: "profiles".into(),
             ..Default::default()
         })
         .await?;

@@ -50,7 +50,7 @@ impl Context {
     pub(crate) fn new(client: Client) -> Context {
         Context {
             client,
-            prefix: "$JS.API".to_string(),
+            prefix: "$JS.API".into(),
             timeout: Duration::from_secs(5),
         }
     }
@@ -93,11 +93,11 @@ impl Context {
     /// let jetstream = async_nats::jetstream::new(client);
     ///
     /// let ack = jetstream
-    ///     .publish("events".to_string(), "data".into())
+    ///     .publish("events".into(), "data".into())
     ///     .await?;
     /// ack.await?;
     /// jetstream
-    ///     .publish("events".to_string(), "data".into())
+    ///     .publish("events".into(), "data".into())
     ///     .await?
     ///     .await?;
     /// # Ok(())
@@ -114,10 +114,10 @@ impl Context {
     /// let jetstream = async_nats::jetstream::new(client);
     ///
     /// let first_ack = jetstream
-    ///     .publish("events".to_string(), "data".into())
+    ///     .publish("events".into(), "data".into())
     ///     .await?;
     /// let second_ack = jetstream
-    ///     .publish("events".to_string(), "data".into())
+    ///     .publish("events".into(), "data".into())
     ///     .await?;
     /// first_ack.await?;
     /// second_ack.await?;
@@ -149,7 +149,7 @@ impl Context {
     /// let mut headers = async_nats::HeaderMap::new();
     /// headers.append("X-key", "Value");
     /// let ack = jetstream
-    ///     .publish_with_headers("events".to_string(), headers, "data".into())
+    ///     .publish_with_headers("events".into(), headers, "data".into())
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -179,7 +179,7 @@ impl Context {
     ///
     /// let ack = jetstream
     ///     .send_publish(
-    ///         "events".to_string(),
+    ///         "events".into(),
     ///         Publish::build().payload("data".into()).message_id("uuid"),
     ///     )
     ///     .await?;
@@ -251,7 +251,7 @@ impl Context {
     ///
     /// let stream = jetstream
     ///     .create_stream(Config {
-    ///         name: "events".to_string(),
+    ///         name: "events".into(),
     ///         max_messages: 100_000,
     ///         discard: DiscardPolicy::Old,
     ///         ..Default::default()
@@ -376,7 +376,7 @@ impl Context {
     ///
     /// let stream = jetstream
     ///     .get_or_create_stream(Config {
-    ///         name: "events".to_string(),
+    ///         name: "events".into(),
     ///         max_messages: 10_000,
     ///         ..Default::default()
     ///     })
@@ -459,7 +459,7 @@ impl Context {
     ///
     /// let stream = jetstream
     ///     .update_stream(&Config {
-    ///         name: "events".to_string(),
+    ///         name: "events".into(),
     ///         discard: DiscardPolicy::New,
     ///         max_messages: 50_000,
     ///         ..Default::default()
@@ -605,7 +605,7 @@ impl Context {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -717,7 +717,7 @@ impl Context {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let kv = jetstream
     ///     .create_key_value(async_nats::jetstream::kv::Config {
-    ///         bucket: "kv".to_string(),
+    ///         bucket: "kv".into(),
     ///         history: 10,
     ///         ..Default::default()
     ///     })
@@ -820,7 +820,7 @@ impl Context {
     /// let jetstream = async_nats::jetstream::new(client);
     ///
     /// let response: Response<Info> = jetstream
-    ///     .request("STREAM.INFO.events".to_string(), &())
+    ///     .request("STREAM.INFO.events".into(), &())
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -858,7 +858,7 @@ impl Context {
     /// let jetstream = async_nats::jetstream::new(client);
     /// let bucket = jetstream
     ///     .create_object_store(async_nats::jetstream::object_store::Config {
-    ///         bucket: "bucket".to_string(),
+    ///         bucket: "bucket".into(),
     ///         ..Default::default()
     ///     })
     ///     .await?;
@@ -1075,7 +1075,7 @@ impl futures::Stream for StreamNames<'_> {
                     self.page_request = Some(Box::pin(async move {
                         match context
                             .request(
-                                "STREAM.NAMES".to_string(),
+                                "STREAM.NAMES".into(),
                                 &json!({
                                     "offset": offset,
                                 }),
@@ -1145,7 +1145,7 @@ impl futures::Stream for Streams<'_> {
                     self.page_request = Some(Box::pin(async move {
                         match context
                             .request(
-                                "STREAM.LIST".to_string(),
+                                "STREAM.LIST".into(),
                                 &json!({
                                     "offset": offset,
                                 }),

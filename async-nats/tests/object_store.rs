@@ -31,7 +31,7 @@ mod object_store {
 
         let bucket = jetstream
             .create_object_store(async_nats::jetstream::object_store::Config {
-                bucket: "bucket".to_string(),
+                bucket: "bucket".into(),
                 ..Default::default()
             })
             .await
@@ -78,7 +78,7 @@ mod object_store {
 
         let bucket = jetstream
             .create_object_store(async_nats::jetstream::object_store::Config {
-                bucket: "bucket".to_string(),
+                bucket: "bucket".into(),
                 ..Default::default()
             })
             .await
@@ -104,9 +104,9 @@ mod object_store {
         });
 
         let object = watcher.next().await.unwrap().unwrap();
-        assert_eq!(object.name, "BAR".to_string());
+        assert_eq!(object.name, "BAR".into());
         let object = watcher.next().await.unwrap().unwrap();
-        assert_eq!(object.name, "BAR".to_string());
+        assert_eq!(object.name, "BAR".into());
         assert!(object.deleted);
     }
 
@@ -119,7 +119,7 @@ mod object_store {
 
         let bucket = jetstream
             .create_object_store(async_nats::jetstream::object_store::Config {
-                bucket: "bucket".to_string(),
+                bucket: "bucket".into(),
                 ..Default::default()
             })
             .await
@@ -157,7 +157,7 @@ mod object_store {
 
         let bucket = jetstream
             .create_object_store(async_nats::jetstream::object_store::Config {
-                bucket: "bucket".to_string(),
+                bucket: "bucket".into(),
                 ..Default::default()
             })
             .await
@@ -190,7 +190,7 @@ mod object_store {
 
         let mut bucket = jetstream
             .create_object_store(async_nats::jetstream::object_store::Config {
-                bucket: "bucket".to_string(),
+                bucket: "bucket".into(),
                 ..Default::default()
             })
             .await
@@ -224,7 +224,7 @@ mod object_store {
 
         let bucket = jetstream
             .create_object_store(async_nats::jetstream::object_store::Config {
-                bucket: "bucket".to_string(),
+                bucket: "bucket".into(),
                 ..Default::default()
             })
             .await
@@ -272,7 +272,7 @@ mod object_store {
 
         let bucket = jetstream
             .create_object_store(async_nats::jetstream::object_store::Config {
-                bucket: "bucket".to_string(),
+                bucket: "bucket".into(),
                 ..Default::default()
             })
             .await
@@ -280,8 +280,8 @@ mod object_store {
         bucket
             .put(
                 ObjectMeta {
-                    name: "Foo".to_string(),
-                    description: Some("foo desc".to_string()),
+                    name: "Foo".into(),
+                    description: Some("foo desc".into()),
                     ..Default::default()
                 },
                 &mut "dadada".as_bytes(),
@@ -301,8 +301,8 @@ mod object_store {
         }
         let mut list = bucket.list().await.unwrap();
         let obj = list.next().await.unwrap().unwrap();
-        assert_eq!("Foo".to_string(), obj.name);
-        assert_eq!(Some("foo desc".to_string()), obj.description);
+        assert_eq!("Foo".into(), obj.name);
+        assert_eq!(Some("foo desc".into()), obj.description);
         assert_eq!(list.next().await.unwrap().unwrap().name, "0");
         assert_eq!(list.next().await.unwrap().unwrap().name, "1");
         assert_eq!(list.count().await, 8);
@@ -317,7 +317,7 @@ mod object_store {
 
         let bucket = jetstream
             .create_object_store(async_nats::jetstream::object_store::Config {
-                bucket: "bucket".to_string(),
+                bucket: "bucket".into(),
                 ..Default::default()
             })
             .await

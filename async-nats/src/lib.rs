@@ -846,7 +846,7 @@ impl Display for ConnectError {
             .source
             .as_ref()
             .map(|s| s.to_string())
-            .unwrap_or_else(|| "no details".to_string());
+            .unwrap_or_else(|| "no details".into());
         match self.kind {
             ConnectErrorKind::ServerParse => {
                 write!(f, "failed to parse server or server list: {}", source_info)

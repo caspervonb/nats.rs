@@ -51,7 +51,7 @@ pub const NATS_EXPECTED_STREAM: &str = "Nats-Expected-Stream";
 /// let mut headers = async_nats::HeaderMap::new();
 /// headers.insert("Key", "Value");
 /// client
-///     .publish_with_headers("subject".to_string(), headers, "payload".into())
+///     .publish_with_headers("subject".into(), headers, "payload".into())
 ///     .await?;
 /// # Ok(())
 /// # }
@@ -366,7 +366,7 @@ mod tests {
 
         assert_eq!(
             headers.get("Key").unwrap().value,
-            Vec::from_iter(["value".to_string(), "second_value".to_string()])
+            Vec::from_iter(["value".into(), "second_value".into()])
         );
     }
 
@@ -379,10 +379,10 @@ mod tests {
         assert_eq!(headers.get("Key").unwrap().to_string(), "value");
 
         let key: String = headers.get("Key").unwrap().into();
-        assert_eq!(key, "value".to_string());
+        assert_eq!(key, "value".into());
 
         let key: String = headers.get("Key").unwrap().to_owned().into();
-        assert_eq!(key, "value".to_string());
+        assert_eq!(key, "value".into());
 
         assert_eq!(headers.get("Key").unwrap().as_str(), "value");
     }
@@ -394,7 +394,7 @@ mod tests {
 
         assert_eq!(
             headers.get("Key").unwrap().value,
-            Vec::from_iter(["Value".to_string()])
+            Vec::from_iter(["Value".into()])
         );
     }
 

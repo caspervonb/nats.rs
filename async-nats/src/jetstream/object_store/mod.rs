@@ -344,7 +344,7 @@ impl ObjectStore {
             .create_consumer(crate::jetstream::consumer::push::OrderedConfig {
                 deliver_policy: super::consumer::DeliverPolicy::New,
                 deliver_subject: self.stream.context.client.new_inbox(),
-                description: Some("object store watcher".to_string()),
+                description: Some("object store watcher".into()),
                 filter_subject: subject,
                 ..Default::default()
             })
@@ -381,7 +381,7 @@ impl ObjectStore {
             .create_consumer(crate::jetstream::consumer::push::OrderedConfig {
                 deliver_policy: super::consumer::DeliverPolicy::All,
                 deliver_subject: self.stream.context.client.new_inbox(),
-                description: Some("object store list".to_string()),
+                description: Some("object store list".into()),
                 filter_subject: subject,
                 ..Default::default()
             })
