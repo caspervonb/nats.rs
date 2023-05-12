@@ -13,6 +13,7 @@
 
 //! NATS [Message][crate::Message] headers, modeled loosely after the [http::header] crate.
 
+use bytes::Bytes;
 use std::{collections::HashMap, fmt, slice, str::FromStr};
 
 /// A struct for handling NATS headers.
@@ -250,7 +251,7 @@ pub trait IntoHeaderName {
 impl IntoHeaderName for &str {
     fn into_header_name(self) -> HeaderName {
         HeaderName {
-            inner: HeaderRepr::Custom(self.to_string()),
+            inner: HeaderRepr::Custom(self.into()),
         }
     }
 }
@@ -371,9 +372,46 @@ standard_headers! {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
+struct CustomHeader {
+    bytes: Bytes,
+}
+
+impl CustomHeader {
+    #[inline]
+    pub(crate) const fn from_static(value: &'static str) -> CustomHeader {
+        CustomHeader {
+            bytes: Bytes::from_static(value.as_bytes()),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn as_str(&self) -> &str {
+        unsafe { std::str::from_utf8_unchecked(self.bytes.as_ref()) }
+    }
+}
+
+impl From<String> for CustomHeader {
+    #[inline]
+    fn from(value: String) -> CustomHeader {
+        CustomHeader {
+            bytes: Bytes::from(value),
+        }
+    }
+}
+
+impl<'a> From<&'a str> for CustomHeader {
+    #[inline]
+    fn from(value: &'a str) -> CustomHeader {
+        CustomHeader {
+            bytes: Bytes::copy_from_slice(value.as_bytes()),
+        }
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
 enum HeaderRepr {
     Standard(StandardHeader),
-    Custom(String),
+    Custom(CustomHeader),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -382,8 +420,21 @@ pub struct HeaderName {
 }
 
 impl HeaderName {
+    /// Converts a static string to a NATS header name.
+    #[inline]
+    pub const fn from_static(value: &'static str) -> HeaderName {
+        if let Some(standard) = StandardHeader::from_bytes(value.as_bytes()) {
+            return HeaderName {
+                inner: HeaderRepr::Standard(standard),
+            };
+        }
+
+        HeaderName {
+            inner: HeaderRepr::Custom(CustomHeader::from_static(value)),
+        }
+    }
+
     /// Returns a `str` representation of the header.
-    ///
     #[inline]
     fn as_str(&self) -> &str {
         match self.inner {
@@ -402,7 +453,7 @@ impl FromStr for HeaderName {
                 inner: HeaderRepr::Standard(v),
             }),
             None => Ok(HeaderName {
-                inner: HeaderRepr::Custom(s.to_string()),
+                inner: HeaderRepr::Custom(CustomHeader::from(s)),
             }),
         }
     }
@@ -441,7 +492,7 @@ impl std::error::Error for ParseError {}
 mod tests {
     use std::str::{from_utf8, FromStr};
 
-    use crate::{HeaderMap, HeaderValue};
+    use crate::{HeaderMap, HeaderName, HeaderValue};
 
     #[test]
     fn try_from() -> Result<(), super::ParseError> {
@@ -512,5 +563,13 @@ mod tests {
         headers.append("Key", "second_value");
         headers.insert("Second", "SecondValue");
         assert!(!headers.is_empty());
+    }
+
+    #[test]
+    fn from_static_eq() {
+        let a = HeaderName::from_static("NATS-Stream");
+        let b = HeaderName::from_static("NATS-Stream");
+
+        assert_eq!(a, b);
     }
 }
